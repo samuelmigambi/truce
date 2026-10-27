@@ -23,7 +23,7 @@ The seller approves every step; nothing reaches the buyer or PayPal without thei
 
 ## Try it
 
-**Live demo: https://truce.example**
+**Live demo: https://truce-zwezi7h4sa-uc.a.run.app**
 
 - **A private copy for each visitor.** The first visit makes you a copy of the Wick & Ember demo shop:
   about 240 orders over 90 days, five open disputes that each call for a different move, twelve
