@@ -1,0 +1,268 @@
+<!doctype html>
+<!--
+  The buyer's photo for the "smaller than expected" case: the Amber Glow pillar (3 × 4 in) on a
+  table, next to a ruler. Rendered to public/demo/photos/amber-glow-ruler.png at 1200 × 900 by
+  render.sh in this folder.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; background: #000; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+  <defs>
+    <!-- Wall: window light from the left, falling off to the right. -->
+    <linearGradient id="wall" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F2EBE0"/>
+      <stop offset="0.4" stop-color="#E7DCCC"/>
+      <stop offset="1" stop-color="#C9BAA4"/>
+    </linearGradient>
+    <linearGradient id="wallFloor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#3A2A18" stop-opacity="0.18"/>
+    </linearGradient>
+    <radialGradient id="windowGlow" cx="0.12" cy="0.3" r="0.6">
+      <stop offset="0" stop-color="#FFF9EF" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#FFF9EF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Oak tabletop. -->
+    <linearGradient id="table" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#C9A274"/>
+      <stop offset="0.3" stop-color="#BF9565"/>
+      <stop offset="1" stop-color="#A47548"/>
+    </linearGradient>
+    <linearGradient id="tableLight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFF6E6" stop-opacity="0.34"/>
+      <stop offset="0.5" stop-color="#FFF6E6" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#1A0E04" stop-opacity="0.16"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.2" cy="0.12" r="0.5">
+      <stop offset="0" stop-color="#FFF8EA" stop-opacity="0.38"/>
+      <stop offset="1" stop-color="#FFF8EA" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="grainCoarse" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.0045 0.07" numOctaves="5" seed="7" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.33  0 0 0 0 0.20  0 0 0 0 0.09  0 0 0 1.6 -0.55"/>
+    </filter>
+    <filter id="grainFine" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.55" numOctaves="3" seed="11" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.28  0 0 0 0 0.16  0 0 0 0 0.06  0 0 0 1.2 -0.42"/>
+    </filter>
+    <filter id="pores" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="turbulence" baseFrequency="0.03 0.9" numOctaves="1" seed="2" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.25  0 0 0 0 0.14  0 0 0 0 0.05  0 0 0 2.2 -1.25"/>
+    </filter>
+    <linearGradient id="focusMask" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0.43" stop-color="#fff"/>
+      <stop offset="0.62" stop-color="#000"/>
+    </linearGradient>
+    <mask id="backOfTable"><rect width="1200" height="900" fill="url(#focusMask)"/></mask>
+
+    <!-- The pillar: honey-amber wax, lit from the left, a little translucent. -->
+    <linearGradient id="wax" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#B8701F"/>
+      <stop offset="0.05" stop-color="#DE9D45"/>
+      <stop offset="0.17" stop-color="#F3BF6E"/>
+      <stop offset="0.3" stop-color="#EDB15C"/>
+      <stop offset="0.5" stop-color="#DF9C44"/>
+      <stop offset="0.72" stop-color="#BF7C27"/>
+      <stop offset="0.9" stop-color="#8A5014"/>
+      <stop offset="1" stop-color="#9A5A18"/>
+    </linearGradient>
+    <linearGradient id="waxDepth" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFD68F" stop-opacity="0.42"/>
+      <stop offset="0.12" stop-color="#FFD68F" stop-opacity="0"/>
+      <stop offset="0.8" stop-color="#4A2404" stop-opacity="0"/>
+      <stop offset="1" stop-color="#4A2404" stop-opacity="0.3"/>
+    </linearGradient>
+    <radialGradient id="top" cx="0.36" cy="0.42" r="0.7">
+      <stop offset="0" stop-color="#F8C87E"/>
+      <stop offset="0.65" stop-color="#EEB061"/>
+      <stop offset="1" stop-color="#D99038"/>
+    </radialGradient>
+    <filter id="mottle" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.02 0.013" numOctaves="4" seed="3" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.55  0 0 0 0 0.32  0 0 0 0 0.08  0 0 0 1.0 -0.4"/>
+    </filter>
+    <filter id="bloom" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="2" seed="29" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 1  0 0 0 0 0.93  0 0 0 0 0.8  0 0 0 3.2 -1.9"/>
+    </filter>
+    <filter id="drips" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.05 0.004" numOctaves="2" seed="41" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 1  0 0 0 0 0.86  0 0 0 0 0.6  0 0 0 1.1 -0.48"/>
+    </filter>
+    <clipPath id="body">
+      <path d="M382 352 L382 776 A163 46 0 0 0 708 776 L708 352 A163 37 0 0 1 382 352 Z"/>
+    </clipPath>
+    <clipPath id="topFace"><ellipse cx="545" cy="352" rx="163" ry="37"/></clipPath>
+
+    <!-- Wooden ruler. -->
+    <linearGradient id="ruler" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#E6CFA2"/>
+      <stop offset="0.5" stop-color="#DDC08C"/>
+      <stop offset="1" stop-color="#C8A46D"/>
+    </linearGradient>
+    <linearGradient id="rulerShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000" stop-opacity="0.08"/>
+      <stop offset="0.7" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.12"/>
+    </linearGradient>
+    <linearGradient id="rulerSheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.24" stop-color="#FFFFFF" stop-opacity="0.2"/>
+      <stop offset="0.4" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="rulerGrain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.3 0.005" numOctaves="3" seed="5" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.42  0 0 0 0 0.28  0 0 0 0 0.10  0 0 0 1.1 -0.42"/>
+    </filter>
+    <filter id="ink"><feGaussianBlur stdDeviation="0.45"/></filter>
+
+    <!-- Camera: soft focus, grain, vignette. -->
+    <filter id="far" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="9"/></filter>
+    <filter id="near" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="4"/></filter>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2"/></filter>
+    <filter id="shadow" x="-40%" y="-120%" width="180%" height="340%"><feGaussianBlur stdDeviation="20"/></filter>
+    <filter id="contact" x="-20%" y="-200%" width="140%" height="500%"><feGaussianBlur stdDeviation="4"/></filter>
+    <filter id="lens">
+      <feGaussianBlur stdDeviation="0.6" result="b"/>
+      <feComponentTransfer in="b">
+        <feFuncR type="table" tableValues="0 0.08 0.24 0.46 0.69 0.87 0.99"/>
+        <feFuncG type="table" tableValues="0 0.08 0.24 0.46 0.69 0.87 0.99"/>
+        <feFuncB type="table" tableValues="0.01 0.09 0.25 0.46 0.68 0.86 0.97"/>
+      </feComponentTransfer>
+    </filter>
+    <filter id="noise" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="23" result="n"/>
+      <feColorMatrix in="n" type="saturate" values="0" result="g"/>
+      <feComponentTransfer in="g"><feFuncA type="linear" slope="0.2"/></feComponentTransfer>
+    </filter>
+    <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.78">
+      <stop offset="0.5" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.45"/>
+    </radialGradient>
+
+    <g id="tableArt">
+      <rect x="-20" y="430" width="1240" height="490" fill="url(#table)"/>
+      <rect x="-20" y="430" width="1240" height="490" filter="url(#grainCoarse)" opacity="0.9"/>
+      <rect x="-20" y="430" width="1240" height="490" filter="url(#grainFine)" opacity="0.7"/>
+      <rect x="-20" y="430" width="1240" height="490" filter="url(#pores)" opacity="0.5"/>
+      <!-- Board seams, closer together toward the wall. -->
+      <g stroke="#5E3F22" stroke-opacity="0.55">
+        <path d="M-20 498 L1220 494" stroke-width="1.6"/>
+        <path d="M-20 606 L1220 600" stroke-width="2.2"/>
+        <path d="M-20 790 L1220 782" stroke-width="3"/>
+      </g>
+      <g stroke="#F6DDB6" stroke-opacity="0.35">
+        <path d="M-20 500 L1220 496" stroke-width="1"/>
+        <path d="M-20 609 L1220 603" stroke-width="1.2"/>
+        <path d="M-20 794 L1220 786" stroke-width="1.5"/>
+      </g>
+      <rect x="-20" y="430" width="1240" height="490" fill="url(#tableLight)"/>
+      <rect x="-20" y="430" width="1240" height="490" fill="url(#sheen)"/>
+    </g>
+  </defs>
+
+  <!-- Held by hand: a little tilted. -->
+  <g filter="url(#lens)" transform="rotate(-0.8 600 450) scale(1.025) translate(-14 -10)">
+    <!-- The wall, well out of focus behind the subject. -->
+    <g filter="url(#far)">
+      <rect x="-40" y="-40" width="1280" height="500" fill="url(#wall)"/>
+      <rect x="-40" y="-40" width="1280" height="500" fill="url(#windowGlow)"/>
+      <rect x="-40" y="300" width="1280" height="140" fill="url(#wallFloor)"/>
+    </g>
+
+    <!-- The table: sharp in front, softening toward the wall. -->
+    <use href="#tableArt"/>
+    <use href="#tableArt" filter="url(#near)" mask="url(#backOfTable)"/>
+    <rect x="0" y="426" width="1200" height="12" fill="#5A4026" opacity="0.28" filter="url(#soft)"/>
+
+    <!-- Cast shadows, away from the window. -->
+    <path d="M560 752 C700 735 900 725 1060 738 C1110 752 1090 790 1020 800 L560 808 Z" fill="#24140A" opacity="0.42" filter="url(#shadow)"/>
+    <path d="M640 770 C700 762 760 760 790 764 L790 792 L640 800 Z" fill="#1A0D04" opacity="0.35" filter="url(#near)"/>
+    <path d="M905 776 L1160 760 L1160 792 L905 792 Z" fill="#24140A" opacity="0.25" filter="url(#shadow)"/>
+
+    <!-- The ruler, standing on its end just to the right of the candle. -->
+    <g transform="rotate(-1.4 840 784)">
+      <ellipse cx="842" cy="787" rx="86" ry="8" fill="#1E1208" opacity="0.5" filter="url(#contact)"/>
+      <rect x="772" y="-600" width="138" height="1386" fill="url(#ruler)"/>
+      <rect x="772" y="-600" width="138" height="1386" filter="url(#rulerGrain)" opacity="0.75"/>
+      <rect x="772" y="-600" width="138" height="1386" fill="url(#rulerSheen)"/>
+      <rect x="772" y="-600" width="138" height="1386" fill="url(#rulerShade)"/>
+      <rect x="910" y="-600" width="7" height="1386" fill="#937047"/>
+      <rect x="772" y="-600" width="2" height="1386" fill="#B48F60" opacity="0.8"/>
+      <g filter="url(#ink)">
+        <g id="ticks" stroke="#231C14" stroke-linecap="butt"></g>
+        <g id="numbers" fill="#231C14" font-family="Helvetica, Arial, sans-serif" font-size="34"></g>
+      </g>
+      <!-- Wear on the ruler's end. -->
+      <rect x="772" y="770" width="138" height="16" fill="#8A6A44" opacity="0.18" filter="url(#soft)"/>
+    </g>
+
+    <!-- The Amber Glow pillar: 3 in wide, 4 in tall. -->
+    <ellipse cx="545" cy="786" rx="172" ry="40" fill="#170B03" opacity="0.5" filter="url(#contact)"/>
+    <ellipse cx="545" cy="816" rx="150" ry="10" fill="#0E0602" opacity="0.5" filter="url(#contact)"/>
+    <g clip-path="url(#body)">
+      <rect x="370" y="300" width="350" height="520" fill="url(#wax)"/>
+      <rect x="370" y="300" width="350" height="520" filter="url(#mottle)" opacity="0.3" style="mix-blend-mode: multiply"/>
+      <rect x="370" y="300" width="350" height="520" filter="url(#drips)" opacity="0.12" style="mix-blend-mode: screen"/>
+      <rect x="370" y="300" width="350" height="520" filter="url(#bloom)" opacity="0.14" style="mix-blend-mode: screen"/>
+      <rect x="370" y="300" width="350" height="520" fill="url(#waxDepth)"/>
+      <!-- Light glowing through the wax near the lit edge, and a soft highlight. -->
+      <rect x="386" y="360" width="30" height="420" fill="#FFD48C" opacity="0.32" filter="url(#near)"/>
+      <rect x="440" y="370" width="26" height="410" fill="#FFF0CF" opacity="0.22" filter="url(#near)"/>
+    </g>
+    <g clip-path="url(#topFace)">
+      <ellipse cx="545" cy="352" rx="163" ry="37" fill="url(#top)"/>
+      <rect x="370" y="310" width="350" height="90" filter="url(#mottle)" opacity="0.35" style="mix-blend-mode: multiply"/>
+      <!-- A shallow dip around the wick. -->
+      <ellipse cx="552" cy="357" rx="110" ry="22" fill="#B8711F" opacity="0.22" filter="url(#near)"/>
+      <ellipse cx="530" cy="348" rx="60" ry="12" fill="#FFE0A4" opacity="0.25" filter="url(#near)"/>
+    </g>
+    <path d="M384 353 A163 37 0 0 0 706 353" fill="none" stroke="#FFDDA0" stroke-width="2.5" opacity="0.65" filter="url(#soft)"/>
+    <path d="M386 349 A161 35 0 0 1 704 349" fill="none" stroke="#A8601A" stroke-width="1.6" opacity="0.45" filter="url(#soft)"/>
+    <!-- The wick: unburned cotton, with its shadow falling right. -->
+    <path d="M550 357 C556 352 566 351 572 350" fill="none" stroke="#5C3510" stroke-width="5" opacity="0.35" filter="url(#soft)"/>
+    <path d="M546 357 C546 343 549 334 544 322" fill="none" stroke="#E9DFCB" stroke-width="4.2" stroke-linecap="round"/>
+    <path d="M547.5 356 C547.5 344 550 336 546 324" fill="none" stroke="#A89A82" stroke-width="1.4" stroke-linecap="round" opacity="0.8"/>
+    <path d="M544 322 C543 320 543 319 544.5 318" fill="none" stroke="#3B2F25" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <!-- Grain, vignette and a warm cast, as a phone camera adds them. -->
+  <rect width="1200" height="900" filter="url(#noise)" style="mix-blend-mode: overlay"/>
+  <rect width="1200" height="900" fill="url(#vignette)"/>
+  <rect width="1200" height="900" fill="#FFB25A" opacity="0.045" style="mix-blend-mode: multiply"/>
+
+  <script>
+    // Ruler markings: 110 px to the inch, zero on the table at y = 780.
+    const ns = "http://www.w3.org/2000/svg";
+    const ticks = document.getElementById("ticks");
+    const numbers = document.getElementById("numbers");
+    for (let s = 0; s <= 16 * 12; s++) {
+      const y = 780 - (s / 16) * 110;
+      const length = s % 16 === 0 ? 54 : s % 8 === 0 ? 38 : s % 4 === 0 ? 28 : s % 2 === 0 ? 20 : 13;
+      const line = document.createElementNS(ns, "line");
+      line.setAttribute("x1", "774");
+      line.setAttribute("x2", String(774 + length));
+      line.setAttribute("y1", String(y));
+      line.setAttribute("y2", String(y));
+      line.setAttribute("stroke-width", s % 16 === 0 ? "2.6" : "1.7");
+      ticks.appendChild(line);
+      if (s % 16 === 0 && s > 0) {
+        const label = document.createElementNS(ns, "text");
+        label.setAttribute("x", "848");
+        label.setAttribute("y", String(y + 12));
+        label.textContent = String(s / 16);
+        numbers.appendChild(label);
+      }
+    }
+  </script>
+</svg>
+</body>
+</html>

@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+/*
+ * Truce's design tokens. Brand colors come from brand/tokens/colors.css; the functional tones
+ * (warn for "due soon", risk for "overdue" or "lost") and ink tints are ours.
+ */
+@theme {
+  --color-lemon: #ddeb94;
+  --color-lemon-deep: #cbdc72;
+  --color-ink: #1e2614;
+  --color-ink-2: #565d4c;
+  --color-ink-3: #8a9080;
+  --color-cream: #fafbf3;
+  --color-mist: #f1f6d2;
+  --color-moss: #5c7524;
+  --color-moss-deep: #4a5f1c;
+  --color-paper: #ffffff;
+
+  /* Ink at 6–16% for borders and quiet fills. */
+  --color-line: rgb(30 38 20 / 0.1);
+  --color-line-soft: rgb(30 38 20 / 0.06);
+  --color-line-strong: rgb(30 38 20 / 0.16);
+  --color-wash: rgb(30 38 20 / 0.04);
+
+  --color-warn-50: #fbf1d9;
+  --color-warn-200: #efd8a0;
+  --color-warn-500: #d39627;
+  --color-warn-700: #85570a;
+  --color-risk-50: #fbe9e4;
+  --color-risk-200: #f0c5ba;
+  --color-risk-500: #d0543a;
+  --color-risk-700: #9e3823;
+
+  /* Chart series, by dispute reason. */
+  --color-series-1: #1e2614;
+  --color-series-2: #5c7524;
+  --color-series-3: #a8bb55;
+  --color-series-4: #cdd2c2;
+
+  /* Wick & Ember, the demo shop: its own warm palette, so it never looks like Truce. */
+  --color-linen: #f6f0e6;
+  --color-linen-deep: #ece3d4;
+  --color-parchment: #fffcf6;
+  --color-espresso: #2a211a;
+  --color-espresso-2: #6a5b4d;
+  --color-espresso-3: #9a8b7c;
+  --color-ember: #a7472b;
+  --color-ember-deep: #8a3a22;
+  --color-hairline: rgb(42 33 26 / 0.12);
+  --color-hairline-soft: rgb(42 33 26 / 0.07);
+
+  --font-sans: var(--font-onest), system-ui, sans-serif;
+
+  --radius-chip: 8px;
+  --radius-btn: 10px;
+  --radius-card: 12px;
+  --radius-panel: 14px;
+
+  --shadow-pop: 0 1px 2px rgb(30 38 20 / 0.06), 0 12px 32px -8px rgb(30 38 20 / 0.18);
+  --shadow-dialog: 0 2px 6px rgb(30 38 20 / 0.05), 0 32px 80px -16px rgb(30 38 20 / 0.32);
+  --shadow-lift: 0 1px 1px rgb(30 38 20 / 0.04), 0 2px 6px -2px rgb(30 38 20 / 0.08);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-shimmer: shimmer 1.8s var(--ease-out-soft) infinite;
+  --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
+  --animate-flicker: flicker 2.8s ease-in-out infinite;
+  --animate-fade-rise: fade-rise 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+
+  @keyframes fade-rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes pulse-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
+  @keyframes flicker {
+    0%,
+    100% {
+      transform: scale(1, 1) skewX(0deg);
+    }
+    22% {
+      transform: scale(0.97, 1.04) skewX(1.2deg);
+    }
+    46% {
+      transform: scale(1.02, 0.97) skewX(-0.8deg);
+    }
+    71% {
+      transform: scale(0.98, 1.03) skewX(0.6deg);
+    }
+  }
+}
+
+/* The shop's fonts are set on its layout, not the root, so they resolve where they're used. */
+@theme inline {
+  --font-serif: var(--font-fraunces), Georgia, serif;
+  --font-shop: var(--font-figtree), system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    background: var(--color-cream);
+    color: var(--color-ink);
+    font-synthesis: none;
+  }
+
+  ::selection {
+    background: var(--color-lemon);
+    color: var(--color-ink);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-moss);
+    outline-offset: 2px;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-ink-3);
+  }
+}
+
+@layer utilities {
+  /* A quiet shimmer for skeletons and the active analysis step. */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgb(255 255 255 / 0.55) 50%,
+      transparent 100%
+    );
+    animation: var(--animate-shimmer);
+    pointer-events: none;
+  }
+  .shimmer-lemon::after {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgb(221 235 148 / 0.55) 50%,
+      transparent 100%
+    );
+  }
+
+  /* A candle flame in the shop's drawn product art. */
+  .flame {
+    transform-box: fill-box;
+    transform-origin: 50% 100%;
+    animation: var(--animate-flicker);
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+}
+
+/* Motion is a nicety: people who ask for less get none of the decorative kind. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

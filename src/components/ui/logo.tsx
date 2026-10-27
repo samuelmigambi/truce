@@ -1,0 +1,108 @@
+import { cn } from "./cn";
+
+/**
+ * The Common ground mark and the "truce" wordmark, drawn from the brand kit's outlined paths so
+ * they look the same everywhere (brand/README.md). Never recolor outside the palette.
+ */
+
+const CORNER_A =
+  "M3.5 38L3.5 10.5A7 7 0 0 1 10.5 3.5L38 3.5A2 2 0 0 1 40 5.5L40 10.5A2 2 0 0 1 38 12.5L15 12.5A2.5 2.5 0 0 0 12.5 15L12.5 38A2 2 0 0 1 10.5 40L5.5 40A2 2 0 0 1 3.5 38Z";
+const CORNER_B =
+  "M52.5 18L52.5 45.5A7 7 0 0 1 45.5 52.5L18 52.5A2 2 0 0 1 16 50.5L16 45.5A2 2 0 0 1 18 43.5L41 43.5A2.5 2.5 0 0 0 43.5 41L43.5 18A2 2 0 0 1 45.5 16L50.5 16A2 2 0 0 1 52.5 18Z";
+const WORDMARK =
+  "M143.06 75Q140.12 75 138.26 74.22Q136.39 73.44 135.52 71.69Q134.65 69.94 134.65 67L134.65 55.73L130.92 55.73L130.92 50.76L134.65 50.76L134.65 44L140.26 44L140.26 50.76L145.92 50.76L145.92 55.73L140.26 55.73L140.26 66.26Q140.26 68.1 140.9 69.04Q141.55 69.99 143.8 69.99L145.73 69.99L145.73 75ZM148.64 75L148.64 50.76L153.74 50.76L154.06 53.93Q154.98 52.55 156.16 51.79Q157.33 51.03 158.69 50.71Q160.04 50.39 161.42 50.39Q161.93 50.39 162.37 50.39Q162.8 50.39 163.08 50.44L163.08 55.77L161.61 55.77Q159.22 55.77 157.56 56.69Q155.9 57.61 155.08 59.31Q154.25 61.02 154.25 63.5L154.25 75ZM176.1 75.32Q170.86 75.32 168.08 72.61Q165.29 69.89 165.29 64.33L165.29 50.76L170.91 50.76L170.91 63.96Q170.91 65.89 171.43 67.32Q171.96 68.74 173.14 69.5Q174.31 70.26 176.1 70.26Q178.04 70.26 179.16 69.46Q180.29 68.65 180.75 67.23Q181.21 65.8 181.21 63.96L181.21 50.76L186.82 50.76L186.82 64.33Q186.82 70.03 183.99 72.68Q181.16 75.32 176.1 75.32ZM201.75 75.32Q198.02 75.32 195.47 73.78Q192.92 72.24 191.58 69.43Q190.25 66.63 190.25 62.95Q190.25 59.27 191.63 56.44Q193.01 53.61 195.63 52Q198.25 50.39 202.02 50.39Q204.92 50.39 207.13 51.36Q209.34 52.32 210.69 54.19Q212.05 56.05 212.42 58.81L206.9 58.81Q206.35 57.06 205.08 56.26Q203.82 55.45 202.07 55.45Q199.72 55.45 198.37 56.55Q197.01 57.66 196.41 59.36Q195.81 61.06 195.81 62.9Q195.81 64.83 196.46 66.51Q197.1 68.19 198.46 69.23Q199.82 70.26 201.98 70.26Q203.73 70.26 205.13 69.48Q206.53 68.7 206.95 66.95L212.65 66.95Q212.33 69.76 210.76 71.62Q209.2 73.48 206.88 74.4Q204.55 75.32 201.75 75.32ZM226.73 75.32Q222.95 75.32 220.31 73.76Q217.66 72.19 216.31 69.41Q214.95 66.63 214.95 62.95Q214.95 59.27 216.35 56.44Q217.76 53.61 220.4 52Q223.05 50.39 226.77 50.39Q229.53 50.39 231.6 51.38Q233.67 52.37 235.08 54.07Q236.48 55.77 237.17 57.93Q237.86 60.1 237.81 62.49Q237.77 63.04 237.72 63.57Q237.67 64.1 237.58 64.7L220.56 64.7Q220.7 66.31 221.41 67.64Q222.13 68.97 223.44 69.76Q224.75 70.54 226.73 70.54Q227.88 70.54 228.93 70.24Q229.99 69.94 230.8 69.34Q231.6 68.74 231.88 67.82L237.49 67.82Q236.89 70.45 235.28 72.1Q233.67 73.76 231.44 74.54Q229.21 75.32 226.73 75.32ZM232.34 60.51Q232.34 58.99 231.65 57.75Q230.96 56.51 229.69 55.8Q228.43 55.08 226.63 55.08Q224.7 55.08 223.41 55.86Q222.13 56.65 221.44 57.89Q220.75 59.13 220.65 60.51Z";
+
+const INK = "#1E2614";
+const LEMON = "#DDEB94";
+const CREAM = "#FAFBF3";
+
+function Mark({ fill = INK }: { fill?: string }) {
+  return (
+    <>
+      <path d={CORNER_A} fill={fill} />
+      <path d={CORNER_B} fill={fill} />
+      <rect x="20" y="20" width="16" height="16" rx="3" fill={fill} />
+    </>
+  );
+}
+
+/** The full logo: the lemon tile and the wordmark. At least 96 px wide on screen. */
+export function Logo({
+  tone = "light",
+  className,
+  title = "Truce",
+}: {
+  /** "light" for cream and white backgrounds, "dark" for ink. */
+  tone?: "light" | "dark";
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <svg
+      viewBox="0 0 177.82 56"
+      role="img"
+      aria-label={title}
+      className={cn("h-7 w-auto shrink-0", className)}
+    >
+      <g transform="translate(-60 -32)">
+        <rect x="60" y="32" width="56" height="56" rx="10" fill={LEMON} />
+        <g transform="translate(68.4 40.4) scale(0.7)">
+          <Mark />
+        </g>
+        <path d={WORDMARK} fill={tone === "dark" ? CREAM : INK} />
+      </g>
+    </svg>
+  );
+}
+
+/** The app icon: the mark on its lemon tile, for small spaces. */
+export function LogoTile({ className, title }: { className?: string; title?: string }) {
+  return (
+    <svg
+      viewBox="0 0 64 64"
+      role={title ? "img" : undefined}
+      aria-label={title}
+      aria-hidden={title ? undefined : true}
+      className={cn("size-8 shrink-0", className)}
+    >
+      <rect width="64" height="64" rx="11" fill={LEMON} />
+      <g transform="translate(9.6 9.6) scale(0.8)">
+        <Mark />
+      </g>
+    </svg>
+  );
+}
+
+/** The symbol alone, in one color. */
+export function LogoSymbol({ className, fill = INK }: { className?: string; fill?: string }) {
+  return (
+    <svg viewBox="3.5 3.5 49 49" aria-hidden className={cn("size-5 shrink-0", className)}>
+      <Mark fill={fill} />
+    </svg>
+  );
+}
+
+/**
+ * The symbol at work: the two corner pieces ease toward the common ground and back. Used while
+ * Truce is reading or writing. Still for people who prefer less motion (globals.css).
+ */
+export function ThinkingMark({ className, tile = true }: { className?: string; tile?: boolean }) {
+  return (
+    <svg viewBox="0 0 64 64" aria-hidden className={cn("size-6 shrink-0", className)}>
+      {tile && <rect width="64" height="64" rx="11" fill={LEMON} />}
+      <g transform="translate(9.6 9.6) scale(0.8)">
+        <path d={CORNER_A} fill={INK} className="truce-think-a" />
+        <path d={CORNER_B} fill={INK} className="truce-think-b" />
+        <rect x="20" y="20" width="16" height="16" rx="3" fill={INK} className="truce-think-core" />
+      </g>
+      <style>{`
+        .truce-think-a { animation: truce-think-a 1.4s cubic-bezier(0.65,0,0.35,1) infinite; }
+        .truce-think-b { animation: truce-think-b 1.4s cubic-bezier(0.65,0,0.35,1) infinite; }
+        .truce-think-core { transform-origin: 28px 28px; animation: truce-think-core 1.4s cubic-bezier(0.65,0,0.35,1) infinite; }
+        @keyframes truce-think-a { 0%,100% { transform: translate(0,0); } 50% { transform: translate(3px,3px); } }
+        @keyframes truce-think-b { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-3px,-3px); } }
+        @keyframes truce-think-core { 0%,100% { transform: scale(1); } 50% { transform: scale(0.82); } }
+      `}</style>
+    </svg>
+  );
+}

@@ -1,0 +1,10 @@
+/* Truce brand tokens: colors and type. See ../README.md. */
+:root {
+  --truce-lemon: #ddeb94; /* the brand color: logo tile, highlights, good outcomes */
+  --truce-ink: #1e2614; /* text and dark surfaces */
+  --truce-cream: #fafbf3; /* page background, text on ink */
+  --truce-mist: #f1f6d2; /* tinted surfaces, selected rows */
+  --truce-moss: #5c7524; /* links and accents on cream or mist (5.0:1 on cream) */
+
+  --truce-font: "Onest", system-ui, sans-serif;
+}
