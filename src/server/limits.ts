@@ -1,10 +1,12 @@
 import "server-only";
 
+import { ActionError } from "@/server/actions/errors";
 import { getStore, type Store } from "@/server/store";
 
 /**
- * Limits that keep the hosted demo affordable through judging: per-workspace rate limits, and one
- * daily cap on model spend across every visitor. Past the cap, cached runs replay instead.
+ * Limits that keep one account, one shop or one network from overwhelming Truce or its bill:
+ * rate limits in fixed windows, and one daily cap on model spend across every shop. Past the
+ * cap, sample shops replay recorded runs and live analysis waits for the next day.
  */
 
 const DAY_SECONDS = 24 * 60 * 60;
@@ -23,13 +25,26 @@ export async function rateLimit(
   return count <= limit;
 }
 
+/** Like rateLimit, but a refused call is a 429 with `message`. */
+export async function enforceLimit(
+  key: string,
+  limit: number,
+  windowSeconds: number,
+  message: string,
+  store: Store = getStore(),
+): Promise<void> {
+  if (!(await rateLimit(key, limit, windowSeconds, store))) {
+    throw new ActionError(429, message, { code: "rate_limited" });
+  }
+}
+
 /** Adds model spend in dollars to today's total (UTC) and returns the new total. */
 export async function addSpend(dollars: number, store: Store = getStore()): Promise<number> {
   const micros = Number.isFinite(dollars) && dollars > 0 ? Math.round(dollars * MICRO) : 0;
   return (await store.increment(SPEND_KEY, micros, DAY_SECONDS)) / MICRO;
 }
 
-/** Today's model spend in dollars, across all workspaces. */
+/** Today's model spend in dollars, across all shops. */
 export async function spendToday(store: Store = getStore()): Promise<number> {
   return (await store.increment(SPEND_KEY, 0, DAY_SECONDS)) / MICRO;
 }
@@ -40,7 +55,7 @@ export function dailySpendCap(env: Record<string, string | undefined> = process.
   return Number.isFinite(cap) && cap > 0 ? cap : 5;
 }
 
-/** True once today's spend has reached the cap: replay cached runs only. */
+/** True once today's spend has reached the cap. */
 export async function spendCapReached(store: Store = getStore()): Promise<boolean> {
   return (await spendToday(store)) >= dailySpendCap();
 }

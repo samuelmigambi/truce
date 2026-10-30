@@ -29,7 +29,6 @@ export function BuyerPhotos({ photos, buyer }: { photos: CasePhoto[]; buyer: str
                 <Expand className="size-3.5" />
               </span>
             </button>
-            <p className="text-ink-2 mt-1.5 text-xs leading-snug">{photo.caption}</p>
           </li>
         ))}
       </ul>

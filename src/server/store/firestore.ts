@@ -7,22 +7,35 @@ import type {
   DocumentReference,
   Firestore,
 } from "firebase-admin/firestore";
-import type { Analysis, Case, CaseEvent, Order, Workspace } from "@/lib/domain";
-import type { BulkStore, WorkspaceData } from "./bulk";
+import {
+  MAX_SAVED_MESSAGES,
+  summaryOf,
+  type ChatMessage,
+  type ChatSummary,
+  type ChatThread,
+} from "@/lib/chat-thread";
+import type { Analysis, AppNotification, Case, CaseEvent, Order, Shop, User } from "@/lib/domain";
+import { adminApp } from "@/server/firebase";
+import type { BulkStore, ShopData } from "./bulk";
 import { sortEvents, windowOf } from "./memory";
-import type { Store } from "./types";
+import type { SealedSecret, SecretName, Store } from "./types";
 
 /**
  * The production store, on Firestore:
- * - workspaces/{id}, with orders, cases (each with its events) and analyses beneath it;
- * - cache/{key}, shared across workspaces, with an expiresAt for a TTL policy;
+ * - users/{uid};
+ * - shops/{shopId}, with orders, cases (each with its events), analyses, notifications and
+ *   secrets beneath it. A shop's document also carries `paypalApp`, the hash of its PayPal
+ *   app's client ID (or null), so connected shops can be found with one query;
+ * - shops/{shopId}/members/{uid}/chats/{chatId}: each member's Ask Truce chats, under their own
+ *   path so listing them needs no composite index. The messages are kept as JSON text;
+ * - cache/{key}, shared across shops, with an expiresAt for a TTL policy;
  * - counters/{key}~{window}, for rate limits and the daily spend.
- * firebase-admin loads on first use, so the memory store never pays for it.
+ * Security rules deny every client: only this server, through the admin SDK, reads or writes.
  */
 
-const APP_NAME = "truce";
 /** Firestore's most writes in one batch. */
 const BATCH_LIMIT = 500;
+type ShopCollection = "orders" | "cases" | "analyses" | "notifications" | "secrets";
 
 export class FirestoreStore implements Store, BulkStore {
   readonly kind = "firestore" as const;
@@ -42,95 +55,205 @@ export class FirestoreStore implements Store, BulkStore {
     return this.db;
   }
 
-  private async workspace(id: string) {
-    return (await this.firestore()).collection("workspaces").doc(docId(id));
+  private async shopDoc(id: string) {
+    return (await this.firestore()).collection("shops").doc(docId(id));
   }
 
-  private async collection(workspaceId: string, name: "orders" | "cases" | "analyses") {
-    return (await this.workspace(workspaceId)).collection(name);
+  private async collection(shopId: string, name: ShopCollection) {
+    return (await this.shopDoc(shopId)).collection(name);
   }
 
-  private async events(workspaceId: string, caseId: string) {
-    return (await this.collection(workspaceId, "cases")).doc(docId(caseId)).collection("events");
+  private async events(shopId: string, caseId: string) {
+    return (await this.collection(shopId, "cases")).doc(docId(caseId)).collection("events");
   }
 
-  async getWorkspace(id: string): Promise<Workspace | null> {
-    const snap = await (await this.workspace(id)).get();
-    return snap.exists ? (snap.data() as Workspace) : null;
+  async getUser(uid: string): Promise<User | null> {
+    const snap = await (await this.firestore()).collection("users").doc(docId(uid)).get();
+    return snap.exists ? (snap.data() as User) : null;
   }
 
-  async saveWorkspace(workspace: Workspace): Promise<void> {
-    await (await this.workspace(workspace.id)).set(stripUndefined(workspace));
+  async saveUser(user: User): Promise<void> {
+    await (
+      await this.firestore()
+    )
+      .collection("users")
+      .doc(docId(user.uid))
+      .set(stripUndefined(user));
   }
 
-  async clearWorkspace(id: string): Promise<void> {
+  async getShop(id: string): Promise<Shop | null> {
+    const snap = await (await this.shopDoc(id)).get();
+    return snap.exists ? fromShopDoc(snap.data()!) : null;
+  }
+
+  async saveShop(shop: Shop): Promise<void> {
+    await (await this.shopDoc(shop.id)).set(toShopDoc(shop));
+  }
+
+  async listShopsFor(uid: string): Promise<Shop[]> {
+    const snap = await (
+      await this.firestore()
+    )
+      .collection("shops")
+      .where("memberIds", "array-contains", uid)
+      .get();
+    return snap.docs.map((doc) => fromShopDoc(doc.data()));
+  }
+
+  async listConnectedShops(): Promise<Shop[]> {
+    const snap = await (
+      await this.firestore()
+    )
+      .collection("shops")
+      .where("paypalApp", "!=", null)
+      .get();
+    return snap.docs.map((doc) => fromShopDoc(doc.data())).filter((s) => s.kind === "real");
+  }
+
+  async listShopsByPayPalApp(clientIdHash: string): Promise<Shop[]> {
+    const snap = await (
+      await this.firestore()
+    )
+      .collection("shops")
+      .where("paypalApp", "==", clientIdHash)
+      .get();
+    return snap.docs.map((doc) => fromShopDoc(doc.data())).filter((s) => s.kind === "real");
+  }
+
+  /** The shop's document and everything beneath it; recursiveDelete takes the subcollections. */
+  async deleteShop(id: string): Promise<void> {
     const db = await this.firestore();
-    const names = ["orders", "cases", "analyses"] as const;
-    // recursiveDelete takes the cases' events with them.
+    await db.recursiveDelete(await this.shopDoc(id));
+  }
+
+  async clearShop(id: string): Promise<void> {
+    const db = await this.firestore();
+    const names = ["orders", "cases", "analyses", "notifications"] as const;
     await Promise.all(
       names.map(async (name) => db.recursiveDelete(await this.collection(id, name))),
     );
   }
 
-  async listOrders(workspaceId: string): Promise<Order[]> {
-    return all<Order>(await this.collection(workspaceId, "orders"));
+  async getSecret(shopId: string, name: SecretName): Promise<SealedSecret | null> {
+    const snap = await (await this.collection(shopId, "secrets")).doc(name).get();
+    return snap.exists ? (snap.data() as SealedSecret) : null;
   }
 
-  async getOrder(workspaceId: string, orderId: string): Promise<Order | null> {
-    const snap = await (await this.collection(workspaceId, "orders")).doc(docId(orderId)).get();
+  async saveSecret(shopId: string, name: SecretName, secret: SealedSecret): Promise<void> {
+    await (await this.collection(shopId, "secrets")).doc(name).set(stripUndefined(secret));
+  }
+
+  async deleteSecret(shopId: string, name: SecretName): Promise<void> {
+    await (await this.collection(shopId, "secrets")).doc(name).delete();
+  }
+
+  async listOrders(shopId: string): Promise<Order[]> {
+    return all<Order>(await this.collection(shopId, "orders"));
+  }
+
+  async getOrder(shopId: string, orderId: string): Promise<Order | null> {
+    const snap = await (await this.collection(shopId, "orders")).doc(docId(orderId)).get();
     return snap.exists ? (snap.data() as Order) : null;
   }
 
-  async saveOrder(workspaceId: string, order: Order): Promise<void> {
-    const ref = (await this.collection(workspaceId, "orders")).doc(docId(order.id));
+  async saveOrder(shopId: string, order: Order): Promise<void> {
+    const ref = (await this.collection(shopId, "orders")).doc(docId(order.id));
     await ref.set(stripUndefined(order));
   }
 
-  async listCases(workspaceId: string): Promise<Case[]> {
-    return all<Case>(await this.collection(workspaceId, "cases"));
+  async listCases(shopId: string): Promise<Case[]> {
+    return all<Case>(await this.collection(shopId, "cases"));
   }
 
-  async getCase(workspaceId: string, caseId: string): Promise<Case | null> {
-    const snap = await (await this.collection(workspaceId, "cases")).doc(docId(caseId)).get();
+  async getCase(shopId: string, caseId: string): Promise<Case | null> {
+    const snap = await (await this.collection(shopId, "cases")).doc(docId(caseId)).get();
     return snap.exists ? (snap.data() as Case) : null;
   }
 
-  async saveCase(workspaceId: string, kase: Case): Promise<void> {
-    const ref = (await this.collection(workspaceId, "cases")).doc(docId(kase.id));
+  async saveCase(shopId: string, kase: Case): Promise<void> {
+    const ref = (await this.collection(shopId, "cases")).doc(docId(kase.id));
     await ref.set(stripUndefined(kase));
   }
 
-  async listEvents(workspaceId: string, caseId: string): Promise<CaseEvent[]> {
-    return sortEvents(await all<CaseEvent>(await this.events(workspaceId, caseId)));
+  async listEvents(shopId: string, caseId: string): Promise<CaseEvent[]> {
+    return sortEvents(await all<CaseEvent>(await this.events(shopId, caseId)));
   }
 
-  async addEvent(workspaceId: string, caseId: string, event: CaseEvent): Promise<void> {
-    await (await this.events(workspaceId, caseId)).doc(docId(event.id)).set(stripUndefined(event));
+  async addEvent(shopId: string, caseId: string, event: CaseEvent): Promise<void> {
+    await (await this.events(shopId, caseId)).doc(docId(event.id)).set(stripUndefined(event));
   }
 
-  async getAnalysis(workspaceId: string, caseId: string): Promise<Analysis | null> {
-    const snap = await (await this.collection(workspaceId, "analyses")).doc(docId(caseId)).get();
+  async getAnalysis(shopId: string, caseId: string): Promise<Analysis | null> {
+    const snap = await (await this.collection(shopId, "analyses")).doc(docId(caseId)).get();
     return snap.exists ? (snap.data() as Analysis) : null;
   }
 
-  async saveAnalysis(workspaceId: string, analysis: Analysis): Promise<void> {
-    const ref = (await this.collection(workspaceId, "analyses")).doc(docId(analysis.caseId));
+  async saveAnalysis(shopId: string, analysis: Analysis): Promise<void> {
+    const ref = (await this.collection(shopId, "analyses")).doc(docId(analysis.caseId));
     await ref.set(stripUndefined(analysis));
   }
 
-  async listAnalyses(workspaceId: string): Promise<Analysis[]> {
-    return all<Analysis>(await this.collection(workspaceId, "analyses"));
+  async listAnalyses(shopId: string): Promise<Analysis[]> {
+    return all<Analysis>(await this.collection(shopId, "analyses"));
+  }
+
+  private async chats(shopId: string, uid: string) {
+    return (await this.shopDoc(shopId)).collection("members").doc(docId(uid)).collection("chats");
+  }
+
+  async listChats(shopId: string, uid: string, limit: number): Promise<ChatSummary[]> {
+    const snap = await (
+      await this.chats(shopId, uid)
+    )
+      .orderBy("updatedAt", "desc")
+      .limit(limit)
+      .select("id", "title", "createdAt", "updatedAt", "messageCount")
+      .get();
+    return snap.docs.map((doc) => doc.data() as ChatSummary);
+  }
+
+  async getChat(shopId: string, uid: string, chatId: string): Promise<ChatThread | null> {
+    const snap = await (await this.chats(shopId, uid)).doc(docId(chatId)).get();
+    return snap.exists ? fromChatDoc(snap.data()!) : null;
+  }
+
+  async saveChat(shopId: string, chat: ChatThread): Promise<void> {
+    await (await this.chats(shopId, chat.uid)).doc(docId(chat.id)).set(toChatDoc(chat));
+  }
+
+  async deleteChat(shopId: string, uid: string, chatId: string): Promise<void> {
+    await (await this.chats(shopId, uid)).doc(docId(chatId)).delete();
+  }
+
+  async clearChats(shopId: string): Promise<void> {
+    const db = await this.firestore();
+    await db.recursiveDelete((await this.shopDoc(shopId)).collection("members"));
+  }
+
+  async listNotifications(shopId: string, limit: number): Promise<AppNotification[]> {
+    const snap = await (
+      await this.collection(shopId, "notifications")
+    )
+      .orderBy("at", "desc")
+      .limit(limit)
+      .get();
+    return snap.docs.map((doc) => doc.data() as AppNotification);
+  }
+
+  async saveNotification(shopId: string, notification: AppNotification): Promise<void> {
+    const ref = (await this.collection(shopId, "notifications")).doc(docId(notification.id));
+    await ref.set(stripUndefined(notification));
   }
 
   /**
-   * A whole demo copy in one atomic batch (a seed is about 330 writes; a batch takes 500), so it
-   * costs one round trip and nothing can read it half-written. Records the new data doesn't have
-   * are deleted in the same batch. Anything bigger goes in parallel batches, the workspace last.
+   * A whole sample shop in one atomic batch where it fits, so nothing reads it half-written.
+   * Records the new data doesn't have are deleted in the same batch; anything bigger goes in
+   * parallel batches, the shop's own document last.
    */
-  async replaceWorkspace(data: WorkspaceData, fresh: boolean): Promise<void> {
+  async replaceShop(data: ShopData, fresh: boolean): Promise<void> {
     const { Timestamp } = await import("firebase-admin/firestore");
     const db = await this.firestore();
-    const root = await this.workspace(data.workspace.id);
+    const root = await this.shopDoc(data.shop.id);
     const writes: { ref: DocumentReference; data?: DocumentData }[] = [];
     const put = (ref: DocumentReference, value: object) =>
       writes.push({ ref, data: stripUndefined(value) as DocumentData });
@@ -153,15 +276,18 @@ export class FirestoreStore implements Store, BulkStore {
     }
     if (!fresh) {
       const keep = new Set(writes.map((w) => w.ref.path));
-      const [orders, caseRefs, analyses] = await Promise.all([
+      const [orders, caseRefs, analyses, notifications] = await Promise.all([
         root.collection("orders").listDocuments(),
         cases.listDocuments(),
         root.collection("analyses").listDocuments(),
+        data.keepNotifications
+          ? Promise.resolve([])
+          : root.collection("notifications").listDocuments(),
       ]);
       const events = (
         await Promise.all(caseRefs.map((ref) => ref.collection("events").listDocuments()))
       ).flat();
-      for (const ref of [...orders, ...caseRefs, ...events, ...analyses]) {
+      for (const ref of [...orders, ...caseRefs, ...events, ...analyses, ...notifications]) {
         if (!keep.has(ref.path)) writes.push({ ref });
       }
     }
@@ -173,37 +299,16 @@ export class FirestoreStore implements Store, BulkStore {
       }
       return batch.commit();
     };
-    const workspace = { ref: root, data: stripUndefined(data.workspace) as DocumentData };
+    const shop = { ref: root, data: toShopDoc(data.shop) };
     if (writes.length < BATCH_LIMIT) {
-      await commit([...writes, workspace]);
+      await commit([...writes, shop]);
       return;
     }
     const parts: (typeof writes)[] = [];
     for (let i = 0; i < writes.length; i += BATCH_LIMIT)
       parts.push(writes.slice(i, i + BATCH_LIMIT));
     await Promise.all(parts.map(commit));
-    await commit([workspace]);
-  }
-
-  async expiredWorkspaces(now: Date, limit: number): Promise<string[]> {
-    const snap = await (
-      await this.firestore()
-    )
-      .collection("workspaces")
-      .where("expiresAt", "<=", now.toISOString())
-      .orderBy("expiresAt")
-      .limit(limit)
-      .get();
-    return snap.docs.map((doc) => (doc.data() as Workspace).id);
-  }
-
-  /** The workspace document, everything beneath it, and the shared cache entries named. */
-  async deleteWorkspace(id: string, cacheKeys: string[] = []): Promise<void> {
-    const db = await this.firestore();
-    await Promise.all([
-      db.recursiveDelete(await this.workspace(id)),
-      ...cacheKeys.map((key) => db.collection("cache").doc(docId(key)).delete()),
-    ]);
+    await commit([shop]);
   }
 
   /** Cached values are kept as JSON text, so any shape fits (Firestore refuses nested arrays). */
@@ -242,13 +347,50 @@ export class FirestoreStore implements Store, BulkStore {
   }
 }
 
+/** The shop as stored: the shop, plus the field that finds the shops on one PayPal app. */
+function toShopDoc(shop: Shop): DocumentData {
+  return stripUndefined({ ...shop, paypalApp: shop.paypal?.clientIdHash ?? null }) as DocumentData;
+}
+
+function fromShopDoc(data: DocumentData): Shop {
+  const { paypalApp: _paypalApp, ...shop } = data as Shop & { paypalApp?: unknown };
+  void _paypalApp;
+  return shop as Shop;
+}
+
+/** Firestore keeps a document under 1 MiB; a long chat drops its oldest messages to fit. */
+const CHAT_JSON_LIMIT = 700_000;
+
+/**
+ * A chat as stored: the list's fields on their own, the messages as JSON text (Firestore refuses
+ * nested arrays, and a card can hold one).
+ */
+function toChatDoc(chat: ChatThread): DocumentData {
+  let messages: ChatMessage[] = chat.messages.slice(-MAX_SAVED_MESSAGES);
+  let json = JSON.stringify(messages);
+  while (json.length > CHAT_JSON_LIMIT && messages.length > 2) {
+    messages = messages.slice(2);
+    json = JSON.stringify(messages);
+  }
+  const summary = summaryOf({ ...chat, messages });
+  return { ...summary, uid: chat.uid, json };
+}
+
+function fromChatDoc(data: DocumentData): ChatThread {
+  const { json, ...rest } = data as ChatSummary & { uid: string; json?: string };
+  return {
+    id: rest.id,
+    uid: rest.uid,
+    title: rest.title,
+    createdAt: rest.createdAt,
+    updatedAt: rest.updatedAt,
+    messages: typeof json === "string" ? (JSON.parse(json) as ChatMessage[]) : [],
+  };
+}
+
 async function connect(projectId: string): Promise<Firestore> {
-  const { applicationDefault, getApps, initializeApp } = await import("firebase-admin/app");
   const { getFirestore } = await import("firebase-admin/firestore");
-  const app =
-    getApps().find((a) => a.name === APP_NAME) ??
-    initializeApp({ credential: applicationDefault(), projectId }, APP_NAME);
-  return getFirestore(app);
+  return getFirestore(await adminApp(projectId));
 }
 
 async function all<T>(collection: CollectionReference<DocumentData>): Promise<T[]> {

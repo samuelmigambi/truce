@@ -1,4 +1,5 @@
-const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 
 export type Urgency = "overdue" | "today" | "soon" | "later";
 
@@ -15,13 +16,19 @@ export function urgency(due: Date, now: Date): Urgency {
   return "later";
 }
 
-/** "Due today", "Due in 3 days", "Overdue by 2 days". */
+/**
+ * "Due in 3 days", "Overdue by 2 days". Within a day it counts hours, since "today" would be
+ * wrong for a deadline early tomorrow.
+ */
 export function dueLabel(due: Date, now: Date): string {
-  const days = daysLeft(due, now);
-  if (due.getTime() <= now.getTime()) {
-    const late = Math.max(1, -days);
+  const left = due.getTime() - now.getTime();
+  if (left <= 0) {
+    const late = Math.max(1, -daysLeft(due, now));
     return `Overdue by ${late} ${late === 1 ? "day" : "days"}`;
   }
-  if (days <= 1) return "Due today";
-  return `Due in ${days} days`;
+  if (left <= DAY) {
+    const hours = Math.ceil(left / HOUR);
+    return hours <= 1 ? "Due within the hour" : `Due in ${hours} hours`;
+  }
+  return `Due in ${daysLeft(due, now)} days`;
 }

@@ -10,7 +10,7 @@ import { cn } from "../ui/cn";
 import { CartDrawer } from "./cart-drawer";
 import { Wordmark } from "./ui";
 
-/** The slim sandbox notice, then the shop's header with its bag. */
+/** The slim notice that this is a demo storefront on the sandbox, then the header with its bag. */
 export function ShopHeader() {
   const count = priceCart(useCart()).count;
   const pathname = usePathname();
@@ -27,7 +27,9 @@ export function ShopHeader() {
     <>
       <div className="bg-espresso text-linen">
         <div className="mx-auto flex max-w-[1200px] items-center justify-center gap-3 px-5 py-2 text-center text-[13px] sm:px-8">
-          <p className="text-linen/85">Demo shop on PayPal&rsquo;s sandbox. No real money moves.</p>
+          <p className="text-linen/85">
+            Demo storefront on PayPal&rsquo;s sandbox. No real money moves.
+          </p>
           <Link
             href="/app"
             className="text-linen inline-flex shrink-0 items-center gap-0.5 font-medium underline-offset-4 hover:underline max-sm:hidden"

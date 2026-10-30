@@ -4,19 +4,16 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SeededStore } from "@/server/demo/overlay";
+import { gcpProject } from "@/server/firebase";
 import { CachedStore } from "./cached";
 import { FirestoreStore } from "./firestore";
 import { memoryStore } from "./memory";
 import type { Store } from "./types";
 
-export type { Store } from "./types";
+export type { SealedSecret, SecretName, Store } from "./types";
+export { gcpProject } from "@/server/firebase";
 
 type Env = Record<string, string | undefined>;
-
-/** The Google Cloud project whose Firestore holds Truce's data. */
-export function gcpProject(env: Env = process.env): string {
-  return env.TRUCE_GCP_PROJECT?.trim() || "truce-disputes";
-}
 
 /**
  * Whether Google's application default credentials are likely to work here: Cloud Run, a key file,
@@ -50,8 +47,8 @@ const shared = globalThis as unknown as { __truceStore?: Store };
 let chosen: Store["kind"] | null = null;
 
 /**
- * The store for this process; kept on globalThis so hot reloads reuse it. On Firestore, demo
- * copies are worked out from the seed on read (only changes are stored), and a few seconds of
+ * The store for this process; kept on globalThis so hot reloads reuse it. On Firestore, sample
+ * shops are worked out from the seed on read (only changes are stored), and a few seconds of
  * in-process read cache lets one page's requests share their reads.
  */
 export function getStore(): Store {

@@ -5,268 +5,667 @@
   along it. Rendered to public/demo/photos/ember-mug-cracked.png at 1200 × 900 by render.sh.
 -->
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<style>
-  html, body { margin: 0; padding: 0; background: #000; }
-  svg { display: block; }
-</style>
-</head>
-<body>
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
-  <defs>
-    <!-- Kitchen behind: tiled backsplash and a pale quartz counter, lit from a window on the left. -->
-    <linearGradient id="splash" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#F6F4F0"/>
-      <stop offset="0.5" stop-color="#E9E6E0"/>
-      <stop offset="1" stop-color="#CCC7BF"/>
-    </linearGradient>
-    <pattern id="tiles" width="160" height="80" patternUnits="userSpaceOnUse">
-      <path d="M0 1 H160 M0 41 H160 M1 0 V41 M81 41 V80" stroke="#B4AEA5" stroke-width="3" fill="none"/>
-    </pattern>
-    <linearGradient id="counter" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#E3E0DA"/>
-      <stop offset="0.4" stop-color="#DAD6CF"/>
-      <stop offset="1" stop-color="#C8C3BB"/>
-    </linearGradient>
-    <linearGradient id="counterLight" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.45"/>
-      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.08"/>
-      <stop offset="1" stop-color="#2A241C" stop-opacity="0.14"/>
-    </linearGradient>
-    <radialGradient id="window" cx="0.05" cy="0.25" r="0.75">
-      <stop offset="0" stop-color="#FFFEFA" stop-opacity="0.9"/>
-      <stop offset="1" stop-color="#FFFEFA" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="quartz" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="1" seed="21" result="n"/>
-      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.45  0 0 0 0 0.42  0 0 0 0 0.38  0 0 0 18 -12.6"/>
-    </filter>
-    <filter id="quartzCloud" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.006 0.018" numOctaves="4" seed="9" result="n"/>
-      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.55  0 0 0 0 0.52  0 0 0 0 0.48  0 0 0 0.9 -0.35"/>
-    </filter>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+      }
+      svg {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+      <defs>
+        <!-- Kitchen behind: tiled backsplash and a pale quartz counter, lit from a window on the left. -->
+        <linearGradient id="splash" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#F6F4F0" />
+          <stop offset="0.5" stop-color="#E9E6E0" />
+          <stop offset="1" stop-color="#CCC7BF" />
+        </linearGradient>
+        <pattern id="tiles" width="160" height="80" patternUnits="userSpaceOnUse">
+          <path
+            d="M0 1 H160 M0 41 H160 M1 0 V41 M81 41 V80"
+            stroke="#B4AEA5"
+            stroke-width="3"
+            fill="none"
+          />
+        </pattern>
+        <linearGradient id="counter" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#E3E0DA" />
+          <stop offset="0.4" stop-color="#DAD6CF" />
+          <stop offset="1" stop-color="#C8C3BB" />
+        </linearGradient>
+        <linearGradient id="counterLight" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.45" />
+          <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.08" />
+          <stop offset="1" stop-color="#2A241C" stop-opacity="0.14" />
+        </linearGradient>
+        <radialGradient id="window" cx="0.05" cy="0.25" r="0.75">
+          <stop offset="0" stop-color="#FFFEFA" stop-opacity="0.9" />
+          <stop offset="1" stop-color="#FFFEFA" stop-opacity="0" />
+        </radialGradient>
+        <filter id="quartz" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.7"
+            numOctaves="1"
+            seed="21"
+            result="n"
+          />
+          <feColorMatrix
+            in="n"
+            type="matrix"
+            values="0 0 0 0 0.45  0 0 0 0 0.42  0 0 0 0 0.38  0 0 0 18 -12.6"
+          />
+        </filter>
+        <filter id="quartzCloud" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.006 0.018"
+            numOctaves="4"
+            seed="9"
+            result="n"
+          />
+          <feColorMatrix
+            in="n"
+            type="matrix"
+            values="0 0 0 0 0.55  0 0 0 0 0.52  0 0 0 0 0.48  0 0 0 0.9 -0.35"
+          />
+        </filter>
 
-    <!-- Crumpled kraft paper: creased noise as a height map, lit from the left. -->
-    <filter id="kraft" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="turbulence" baseFrequency="0.006 0.009" numOctaves="4" seed="12" result="height"/>
-      <feDiffuseLighting in="height" surfaceScale="14" diffuseConstant="1.1" lighting-color="#DDB27F" result="lit">
-        <feDistantLight azimuth="210" elevation="42"/>
-      </feDiffuseLighting>
-      <feComposite in="lit" in2="SourceGraphic" operator="in"/>
-    </filter>
+        <!-- Crumpled kraft paper: creased noise as a height map, lit from the left. -->
+        <filter id="kraft" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="turbulence"
+            baseFrequency="0.006 0.009"
+            numOctaves="4"
+            seed="12"
+            result="height"
+          />
+          <feDiffuseLighting
+            in="height"
+            surfaceScale="14"
+            diffuseConstant="1.1"
+            lighting-color="#DDB27F"
+            result="lit"
+          >
+            <feDistantLight azimuth="210" elevation="42" />
+          </feDiffuseLighting>
+          <feComposite in="lit" in2="SourceGraphic" operator="in" />
+        </filter>
 
-    <!-- Terracotta glaze over stoneware, lit from the left. -->
-    <linearGradient id="glaze" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#5C1F11"/>
-      <stop offset="0.05" stop-color="#8E3720"/>
-      <stop offset="0.16" stop-color="#B9563A"/>
-      <stop offset="0.27" stop-color="#B95438"/>
-      <stop offset="0.5" stop-color="#9D4027"/>
-      <stop offset="0.75" stop-color="#76291A"/>
-      <stop offset="0.93" stop-color="#4E190D"/>
-      <stop offset="1" stop-color="#5B2012"/>
-    </linearGradient>
-    <linearGradient id="glazeDepth" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#E7A07F" stop-opacity="0.18"/>
-      <stop offset="0.1" stop-color="#E7A07F" stop-opacity="0"/>
-      <stop offset="0.75" stop-color="#1E0803" stop-opacity="0"/>
-      <stop offset="1" stop-color="#1E0803" stop-opacity="0.35"/>
-    </linearGradient>
-    <linearGradient id="inside" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#2E0E06"/>
-      <stop offset="0.55" stop-color="#6E2716"/>
-      <stop offset="1" stop-color="#A9492D"/>
-    </linearGradient>
-    <linearGradient id="insideDepth" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#000" stop-opacity="0"/>
-      <stop offset="1" stop-color="#000" stop-opacity="0.35"/>
-    </linearGradient>
-    <radialGradient id="wax" cx="0.62" cy="0.35" r="0.85">
-      <stop offset="0" stop-color="#F3E6D0"/>
-      <stop offset="0.6" stop-color="#E6D4B8"/>
-      <stop offset="1" stop-color="#C6AE8A"/>
-    </radialGradient>
-    <filter id="specks" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.45" numOctaves="1" seed="31" result="n"/>
-      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.16  0 0 0 0 0.06  0 0 0 0 0.03  0 0 0 16 -11.2"/>
-    </filter>
-    <filter id="glazeFlow" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.02 0.006" numOctaves="4" seed="8" result="n"/>
-      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.95  0 0 0 0 0.6  0 0 0 0 0.42  0 0 0 1.6 -0.75"/>
-    </filter>
-    <filter id="rings" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.002 0.045" numOctaves="3" seed="17" result="n"/>
-      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.25  0 0 0 0 0.07  0 0 0 0 0.03  0 0 0 1.5 -0.66"/>
-    </filter>
-    <filter id="clay" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="3" seed="13" result="n"/>
-      <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.62  0 0 0 0 0.52  0 0 0 0 0.40  0 0 0 0.8 -0.3"/>
-    </filter>
-    <clipPath id="body">
-      <path d="M395 300 L412 738 A188 60 0 0 0 788 738 L805 300 A205 52 0 0 1 395 300 Z"/>
-    </clipPath>
-    <clipPath id="mouth"><ellipse cx="600" cy="300" rx="191" ry="46"/></clipPath>
+        <!-- Terracotta glaze over stoneware, lit from the left. -->
+        <linearGradient id="glaze" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#5C1F11" />
+          <stop offset="0.05" stop-color="#8E3720" />
+          <stop offset="0.16" stop-color="#B9563A" />
+          <stop offset="0.27" stop-color="#B95438" />
+          <stop offset="0.5" stop-color="#9D4027" />
+          <stop offset="0.75" stop-color="#76291A" />
+          <stop offset="0.93" stop-color="#4E190D" />
+          <stop offset="1" stop-color="#5B2012" />
+        </linearGradient>
+        <linearGradient id="glazeDepth" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#E7A07F" stop-opacity="0.18" />
+          <stop offset="0.1" stop-color="#E7A07F" stop-opacity="0" />
+          <stop offset="0.75" stop-color="#1E0803" stop-opacity="0" />
+          <stop offset="1" stop-color="#1E0803" stop-opacity="0.35" />
+        </linearGradient>
+        <linearGradient id="inside" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#2E0E06" />
+          <stop offset="0.55" stop-color="#6E2716" />
+          <stop offset="1" stop-color="#A9492D" />
+        </linearGradient>
+        <linearGradient id="insideDepth" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#000" stop-opacity="0" />
+          <stop offset="1" stop-color="#000" stop-opacity="0.35" />
+        </linearGradient>
+        <radialGradient id="wax" cx="0.62" cy="0.35" r="0.85">
+          <stop offset="0" stop-color="#F3E6D0" />
+          <stop offset="0.6" stop-color="#E6D4B8" />
+          <stop offset="1" stop-color="#C6AE8A" />
+        </radialGradient>
+        <filter id="specks" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.45"
+            numOctaves="1"
+            seed="31"
+            result="n"
+          />
+          <feColorMatrix
+            in="n"
+            type="matrix"
+            values="0 0 0 0 0.16  0 0 0 0 0.06  0 0 0 0 0.03  0 0 0 16 -11.2"
+          />
+        </filter>
+        <filter id="glazeFlow" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.02 0.006"
+            numOctaves="4"
+            seed="8"
+            result="n"
+          />
+          <feColorMatrix
+            in="n"
+            type="matrix"
+            values="0 0 0 0 0.95  0 0 0 0 0.6  0 0 0 0 0.42  0 0 0 1.6 -0.75"
+          />
+        </filter>
+        <filter id="rings" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.002 0.045"
+            numOctaves="3"
+            seed="17"
+            result="n"
+          />
+          <feColorMatrix
+            in="n"
+            type="matrix"
+            values="0 0 0 0 0.25  0 0 0 0 0.07  0 0 0 0 0.03  0 0 0 1.5 -0.66"
+          />
+        </filter>
+        <filter id="clay" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.05"
+            numOctaves="3"
+            seed="13"
+            result="n"
+          />
+          <feColorMatrix
+            in="n"
+            type="matrix"
+            values="0 0 0 0 0.62  0 0 0 0 0.52  0 0 0 0 0.40  0 0 0 0.8 -0.3"
+          />
+        </filter>
+        <clipPath id="body">
+          <path d="M395 300 L412 738 A188 60 0 0 0 788 738 L805 300 A205 52 0 0 1 395 300 Z" />
+        </clipPath>
+        <clipPath id="mouth"><ellipse cx="600" cy="300" rx="191" ry="46" /></clipPath>
 
-    <!-- Camera. -->
-    <filter id="far" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="11"/></filter>
-    <filter id="mid" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="5"/></filter>
-    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.2"/></filter>
-    <filter id="softer" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="9"/></filter>
-    <filter id="hair" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="0.6"/></filter>
-    <filter id="shadow" x="-40%" y="-120%" width="180%" height="340%"><feGaussianBlur stdDeviation="24"/></filter>
-    <filter id="contact" x="-20%" y="-200%" width="140%" height="500%"><feGaussianBlur stdDeviation="5"/></filter>
-    <filter id="lens">
-      <feGaussianBlur stdDeviation="0.55" result="b"/>
-      <feComponentTransfer in="b">
-        <feFuncR type="table" tableValues="0 0.08 0.24 0.46 0.69 0.87 0.99"/>
-        <feFuncG type="table" tableValues="0 0.08 0.24 0.46 0.69 0.87 0.99"/>
-        <feFuncB type="table" tableValues="0.01 0.09 0.25 0.46 0.68 0.86 0.97"/>
-      </feComponentTransfer>
-    </filter>
-    <filter id="noise" x="0" y="0" width="100%" height="100%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="5" result="n"/>
-      <feColorMatrix in="n" type="saturate" values="0" result="g"/>
-      <feComponentTransfer in="g"><feFuncA type="linear" slope="0.2"/></feComponentTransfer>
-    </filter>
-    <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.78">
-      <stop offset="0.5" stop-color="#000" stop-opacity="0"/>
-      <stop offset="1" stop-color="#000" stop-opacity="0.42"/>
-    </radialGradient>
-    <linearGradient id="counterFocus" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0.48" stop-color="#fff"/>
-      <stop offset="0.66" stop-color="#000"/>
-    </linearGradient>
-    <mask id="backCounter"><rect width="1200" height="900" fill="url(#counterFocus)"/></mask>
-    <linearGradient id="reflectionFade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fff" stop-opacity="0.5"/>
-      <stop offset="0.35" stop-color="#fff" stop-opacity="0"/>
-    </linearGradient>
-    <mask id="reflectionMask"><rect x="0" y="740" width="1200" height="200" fill="url(#reflectionFade)"/></mask>
+        <!-- Camera. -->
+        <filter id="far" x="-5%" y="-5%" width="110%" height="110%">
+          <feGaussianBlur stdDeviation="11" />
+        </filter>
+        <filter id="mid" x="-10%" y="-10%" width="120%" height="120%">
+          <feGaussianBlur stdDeviation="5" />
+        </filter>
+        <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="2.2" />
+        </filter>
+        <filter id="softer" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="9" />
+        </filter>
+        <filter id="hair" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="0.6" />
+        </filter>
+        <filter id="shadow" x="-40%" y="-120%" width="180%" height="340%">
+          <feGaussianBlur stdDeviation="24" />
+        </filter>
+        <filter id="contact" x="-20%" y="-200%" width="140%" height="500%">
+          <feGaussianBlur stdDeviation="5" />
+        </filter>
+        <filter id="lens">
+          <feGaussianBlur stdDeviation="0.55" result="b" />
+          <feComponentTransfer in="b">
+            <feFuncR type="table" tableValues="0 0.08 0.24 0.46 0.69 0.87 0.99" />
+            <feFuncG type="table" tableValues="0 0.08 0.24 0.46 0.69 0.87 0.99" />
+            <feFuncB type="table" tableValues="0.01 0.09 0.25 0.46 0.68 0.86 0.97" />
+          </feComponentTransfer>
+        </filter>
+        <filter id="noise" x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.9"
+            numOctaves="2"
+            seed="5"
+            result="n"
+          />
+          <feColorMatrix in="n" type="saturate" values="0" result="g" />
+          <feComponentTransfer in="g"><feFuncA type="linear" slope="0.2" /></feComponentTransfer>
+        </filter>
+        <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.78">
+          <stop offset="0.5" stop-color="#000" stop-opacity="0" />
+          <stop offset="1" stop-color="#000" stop-opacity="0.42" />
+        </radialGradient>
+        <linearGradient id="counterFocus" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0.48" stop-color="#fff" />
+          <stop offset="0.66" stop-color="#000" />
+        </linearGradient>
+        <mask id="backCounter"><rect width="1200" height="900" fill="url(#counterFocus)" /></mask>
+        <linearGradient id="reflectionFade" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fff" stop-opacity="0.5" />
+          <stop offset="0.35" stop-color="#fff" stop-opacity="0" />
+        </linearGradient>
+        <mask id="reflectionMask">
+          <rect x="0" y="740" width="1200" height="200" fill="url(#reflectionFade)" />
+        </mask>
 
-    <g id="counterArt">
-      <rect x="-40" y="420" width="1280" height="520" fill="url(#counter)"/>
-      <rect x="-40" y="420" width="1280" height="520" filter="url(#quartzCloud)" opacity="0.5"/>
-      <rect x="-40" y="420" width="1280" height="520" filter="url(#quartz)" opacity="0.55"/>
-      <rect x="-40" y="420" width="1280" height="520" fill="url(#counterLight)"/>
-    </g>
+        <g id="counterArt">
+          <rect x="-40" y="420" width="1280" height="520" fill="url(#counter)" />
+          <rect
+            x="-40"
+            y="420"
+            width="1280"
+            height="520"
+            filter="url(#quartzCloud)"
+            opacity="0.5"
+          />
+          <rect x="-40" y="420" width="1280" height="520" filter="url(#quartz)" opacity="0.55" />
+          <rect x="-40" y="420" width="1280" height="520" fill="url(#counterLight)" />
+        </g>
 
-    <g id="mug">
-      <!-- The handle, on the shadow side: a thick loop, lit along its top. -->
-      <path d="M786 392 C898 380 942 448 930 508 C918 570 872 618 788 624" fill="none" stroke="#240903" stroke-opacity="0.58" stroke-width="54" stroke-linecap="round" filter="url(#soft)"/>
-      <path d="M786 392 C898 380 942 448 930 508 C918 570 872 618 788 624" fill="none" stroke="#4E180B" stroke-width="46" stroke-linecap="round"/>
-      <path d="M786 389 C894 378 937 446 926 505 C915 563 870 610 788 618" fill="none" stroke="#7E2D19" stroke-width="32" stroke-linecap="round"/>
-      <path d="M790 384 C886 374 930 430 926 486" fill="none" stroke="#B5523A" stroke-width="12" stroke-linecap="round" opacity="0.8" filter="url(#soft)"/>
-      <path d="M800 378 C884 371 921 420 923 462" fill="none" stroke="#F3B79D" stroke-width="3" stroke-linecap="round" opacity="0.55" filter="url(#hair)"/>
-      <path d="M800 414 C866 410 896 450 896 500 C896 550 862 586 800 596" fill="none" stroke="#1A0602" stroke-width="6" opacity="0.55" filter="url(#soft)"/>
-      <ellipse cx="796" cy="398" rx="14" ry="22" fill="#1A0602" opacity="0.35" filter="url(#soft)"/>
-      <ellipse cx="796" cy="616" rx="14" ry="22" fill="#1A0602" opacity="0.35" filter="url(#soft)"/>
+        <g id="mug">
+          <!-- The handle, on the shadow side: a thick loop, lit along its top. -->
+          <path
+            d="M786 392 C898 380 942 448 930 508 C918 570 872 618 788 624"
+            fill="none"
+            stroke="#240903"
+            stroke-opacity="0.58"
+            stroke-width="54"
+            stroke-linecap="round"
+            filter="url(#soft)"
+          />
+          <path
+            d="M786 392 C898 380 942 448 930 508 C918 570 872 618 788 624"
+            fill="none"
+            stroke="#4E180B"
+            stroke-width="46"
+            stroke-linecap="round"
+          />
+          <path
+            d="M786 389 C894 378 937 446 926 505 C915 563 870 610 788 618"
+            fill="none"
+            stroke="#7E2D19"
+            stroke-width="32"
+            stroke-linecap="round"
+          />
+          <path
+            d="M790 384 C886 374 930 430 926 486"
+            fill="none"
+            stroke="#B5523A"
+            stroke-width="12"
+            stroke-linecap="round"
+            opacity="0.8"
+            filter="url(#soft)"
+          />
+          <path
+            d="M800 378 C884 371 921 420 923 462"
+            fill="none"
+            stroke="#F3B79D"
+            stroke-width="3"
+            stroke-linecap="round"
+            opacity="0.55"
+            filter="url(#hair)"
+          />
+          <path
+            d="M800 414 C866 410 896 450 896 500 C896 550 862 586 800 596"
+            fill="none"
+            stroke="#1A0602"
+            stroke-width="6"
+            opacity="0.55"
+            filter="url(#soft)"
+          />
+          <ellipse
+            cx="796"
+            cy="398"
+            rx="14"
+            ry="22"
+            fill="#1A0602"
+            opacity="0.35"
+            filter="url(#soft)"
+          />
+          <ellipse
+            cx="796"
+            cy="616"
+            rx="14"
+            ry="22"
+            fill="#1A0602"
+            opacity="0.35"
+            filter="url(#soft)"
+          />
 
-      <!-- The body. -->
-      <g clip-path="url(#body)">
-        <rect x="380" y="240" width="440" height="560" fill="url(#glaze)"/>
-        <rect x="380" y="240" width="440" height="560" filter="url(#glazeFlow)" opacity="0.35" style="mix-blend-mode: screen"/>
-        <rect x="380" y="240" width="440" height="560" filter="url(#rings)" opacity="0.28" style="mix-blend-mode: multiply"/>
-        <rect x="380" y="240" width="440" height="560" filter="url(#specks)" opacity="0.65"/>
-        <rect x="380" y="240" width="440" height="560" fill="url(#glazeDepth)"/>
-        <!-- Glossy window reflections: a broad soft one and a bright core. -->
-        <rect x="440" y="320" width="62" height="400" fill="#FFC9B2" opacity="0.28" filter="url(#softer)"/>
-        <path d="M451 352 Q449 520 456 690 L470 690 Q463 520 465 352 Z" fill="#FFF0E6" opacity="0.5" filter="url(#soft)"/>
-        <path d="M471 352 Q469 520 476 690 L486 690 Q479 520 481 352 Z" fill="#FFF0E6" opacity="0.42" filter="url(#soft)"/>
-        <rect x="732" y="350" width="20" height="330" fill="#D97A58" opacity="0.2" filter="url(#softer)"/>
-        <!-- The unglazed foot: speckled clay below a wavy glaze edge. -->
-        <path d="M380 714 C420 707 452 718 492 713 C540 707 572 719 622 715 C672 709 702 720 752 714 C782 711 800 715 820 713 L820 800 L380 800 Z" fill="#BCA585"/>
-        <path d="M380 714 C420 707 452 718 492 713 C540 707 572 719 622 715 C672 709 702 720 752 714 C782 711 800 715 820 713 L820 800 L380 800 Z" filter="url(#clay)" opacity="0.6"/>
-        <path d="M380 714 C420 707 452 718 492 713 C540 707 572 719 622 715 C672 709 702 720 752 714 C782 711 800 715 820 713 L820 800 L380 800 Z" filter="url(#specks)" opacity="0.7"/>
-        <rect x="380" y="700" width="440" height="110" fill="url(#glaze)" opacity="0.35" style="mix-blend-mode: multiply"/>
-        <ellipse cx="600" cy="796" rx="200" ry="40" fill="#1A0904" opacity="0.4" filter="url(#softer)"/>
-        <path d="M380 714 C420 707 452 718 492 713 C540 707 572 719 622 715 C672 709 702 720 752 714 C782 711 800 715 820 713" fill="none" stroke="#4A170A" stroke-width="3" opacity="0.4" filter="url(#hair)"/>
-        <path d="M380 711 C420 704 452 715 492 710 C540 704 572 716 622 712 C672 706 702 717 752 711 C782 708 800 712 820 710" fill="none" stroke="#E79A7A" stroke-width="1.6" opacity="0.4" filter="url(#hair)"/>
+          <!-- The body. -->
+          <g clip-path="url(#body)">
+            <rect x="380" y="240" width="440" height="560" fill="url(#glaze)" />
+            <rect
+              x="380"
+              y="240"
+              width="440"
+              height="560"
+              filter="url(#glazeFlow)"
+              opacity="0.35"
+              style="mix-blend-mode: screen"
+            />
+            <rect
+              x="380"
+              y="240"
+              width="440"
+              height="560"
+              filter="url(#rings)"
+              opacity="0.28"
+              style="mix-blend-mode: multiply"
+            />
+            <rect x="380" y="240" width="440" height="560" filter="url(#specks)" opacity="0.65" />
+            <rect x="380" y="240" width="440" height="560" fill="url(#glazeDepth)" />
+            <!-- Glossy window reflections: a broad soft one and a bright core. -->
+            <rect
+              x="440"
+              y="320"
+              width="62"
+              height="400"
+              fill="#FFC9B2"
+              opacity="0.28"
+              filter="url(#softer)"
+            />
+            <path
+              d="M451 352 Q449 520 456 690 L470 690 Q463 520 465 352 Z"
+              fill="#FFF0E6"
+              opacity="0.5"
+              filter="url(#soft)"
+            />
+            <path
+              d="M471 352 Q469 520 476 690 L486 690 Q479 520 481 352 Z"
+              fill="#FFF0E6"
+              opacity="0.42"
+              filter="url(#soft)"
+            />
+            <rect
+              x="732"
+              y="350"
+              width="20"
+              height="330"
+              fill="#D97A58"
+              opacity="0.2"
+              filter="url(#softer)"
+            />
+            <!-- The unglazed foot: speckled clay below a wavy glaze edge. -->
+            <path
+              d="M380 714 C420 707 452 718 492 713 C540 707 572 719 622 715 C672 709 702 720 752 714 C782 711 800 715 820 713 L820 800 L380 800 Z"
+              fill="#BCA585"
+            />
+            <path
+              d="M380 714 C420 707 452 718 492 713 C540 707 572 719 622 715 C672 709 702 720 752 714 C782 711 800 715 820 713 L820 800 L380 800 Z"
+              filter="url(#clay)"
+              opacity="0.6"
+            />
+            <path
+              d="M380 714 C420 707 452 718 492 713 C540 707 572 719 622 715 C672 709 702 720 752 714 C782 711 800 715 820 713 L820 800 L380 800 Z"
+              filter="url(#specks)"
+              opacity="0.7"
+            />
+            <rect
+              x="380"
+              y="700"
+              width="440"
+              height="110"
+              fill="url(#glaze)"
+              opacity="0.35"
+              style="mix-blend-mode: multiply"
+            />
+            <ellipse
+              cx="600"
+              cy="796"
+              rx="200"
+              ry="40"
+              fill="#1A0904"
+              opacity="0.4"
+              filter="url(#softer)"
+            />
+            <path
+              d="M380 714 C420 707 452 718 492 713 C540 707 572 719 622 715 C672 709 702 720 752 714 C782 711 800 715 820 713"
+              fill="none"
+              stroke="#4A170A"
+              stroke-width="3"
+              opacity="0.4"
+              filter="url(#hair)"
+            />
+            <path
+              d="M380 711 C420 704 452 715 492 710 C540 704 572 716 622 712 C672 706 702 717 752 711 C782 708 800 712 820 710"
+              fill="none"
+              stroke="#E79A7A"
+              stroke-width="1.6"
+              opacity="0.4"
+              filter="url(#hair)"
+            />
+          </g>
+
+          <!-- The crack: from a chip in the rim down the lit side, with chipped glaze along it. -->
+          <g filter="url(#hair)">
+            <path
+              d="M485 345 L487 356 L489 368 L485 380 L484 393 L489 405 L491 420 L488 433 L487 447 L493 462 L496 478 L493 492 L492 506 L497 522 L500 539 L498 553 L497 566 L501 579 L503 590"
+              fill="none"
+              stroke="#E9B497"
+              stroke-width="1.6"
+              opacity="0.5"
+              transform="translate(1.9 0.3)"
+            />
+            <path
+              d="M485 345 L487 356 L489 368 L485 380 L484 393 L489 405 L491 420 L488 433 L487 447 L493 462 L496 478 L493 492 L492 506 L497 522 L500 539 L498 553 L497 566 L501 579 L503 590"
+              fill="none"
+              stroke="#2A0D05"
+              stroke-width="2.4"
+              stroke-linejoin="round"
+              opacity="0.92"
+            />
+            <path
+              d="M487 447 L478 456 L471 467 L469 481 L466 494 L461 506 L456 518"
+              fill="none"
+              stroke="#F1C3A8"
+              stroke-width="1.5"
+              opacity="0.5"
+              transform="translate(1.8 0.4)"
+            />
+            <path
+              d="M487 447 L478 456 L471 467 L469 481 L466 494 L461 506 L456 518"
+              fill="none"
+              stroke="#2A0D05"
+              stroke-width="1.7"
+              stroke-linejoin="round"
+              opacity="0.9"
+            />
+            <path
+              d="M496 478 L505 488 L510 500 L511 511"
+              fill="none"
+              stroke="#2A0D05"
+              stroke-width="1.1"
+              opacity="0.85"
+            />
+          </g>
+          <path
+            d="M480 350 L500 350 L506 596 L486 596 Z"
+            fill="#1A0602"
+            opacity="0.12"
+            filter="url(#softer)"
+          />
+
+          <!-- The rim, and the inside of the mug. -->
+          <ellipse cx="600" cy="300" rx="205" ry="52" fill="#A9492D" />
+          <ellipse
+            cx="600"
+            cy="300"
+            rx="198"
+            ry="49"
+            fill="none"
+            stroke="#D08E70"
+            stroke-width="5"
+            opacity="0.7"
+            filter="url(#hair)"
+          />
+          <path
+            d="M398 303 A203 50 0 0 0 802 303"
+            fill="none"
+            stroke="#F4C9AE"
+            stroke-width="2.5"
+            opacity="0.55"
+            filter="url(#hair)"
+          />
+          <g clip-path="url(#mouth)">
+            <rect x="400" y="240" width="400" height="130" fill="url(#inside)" />
+            <rect x="400" y="240" width="400" height="130" fill="url(#insideDepth)" />
+            <!-- The wax sits below the rim; the front of the mug hides its near edge. -->
+            <ellipse cx="600" cy="334" rx="185" ry="44" fill="url(#wax)" />
+            <ellipse cx="600" cy="334" rx="185" ry="44" filter="url(#clay)" opacity="0.15" />
+            <ellipse
+              cx="600"
+              cy="300"
+              rx="191"
+              ry="46"
+              fill="none"
+              stroke="#1E0803"
+              stroke-width="18"
+              opacity="0.32"
+              filter="url(#soft)"
+            />
+            <!-- The wax split along the crack, from the rim toward the wick. -->
+            <path
+              d="M486 341 L497 338 L509 337 L521 340 L533 336 L547 334 L560 336 L574 332 L585 331"
+              fill="none"
+              stroke="#6E553B"
+              stroke-width="3"
+              stroke-linejoin="round"
+              opacity="0.9"
+              filter="url(#hair)"
+            />
+            <path
+              d="M486 343 L497 340 L509 339 L521 342 L533 338 L547 336 L560 338 L574 334 L585 333"
+              fill="none"
+              stroke="#FFF8EE"
+              stroke-width="1.1"
+              opacity="0.6"
+            />
+            <!-- The wick: unburned cotton, leaning a little, and its shadow. -->
+            <path
+              d="M601 336 C610 335 620 336 628 338"
+              fill="none"
+              stroke="#7D6649"
+              stroke-width="5"
+              opacity="0.35"
+              filter="url(#soft)"
+            />
+            <path
+              d="M600 336 C600 322 603 311 598 299"
+              fill="none"
+              stroke="#F2EBDD"
+              stroke-width="4.5"
+              stroke-linecap="round"
+            />
+            <path
+              d="M601.6 335 C601.6 323 604 313 600 302"
+              fill="none"
+              stroke="#A3967F"
+              stroke-width="1.4"
+              stroke-linecap="round"
+              opacity="0.8"
+            />
+          </g>
+          <!-- A chip out of the rim where the crack starts, showing the clay. -->
+          <path d="M473 339 L495 338 L490 345 L486 352 Z" fill="#D2B193" />
+          <path
+            d="M473 339 L495 338 L490 345 L486 352 Z"
+            fill="none"
+            stroke="#2E0E05"
+            stroke-width="1.3"
+            opacity="0.8"
+            filter="url(#hair)"
+          />
+        </g>
+      </defs>
+
+      <!-- Held by hand: a little tilted. -->
+      <g filter="url(#lens)" transform="rotate(0.9 600 450) scale(1.03) translate(-16 -12)">
+        <!-- Kitchen, far out of focus. -->
+        <g filter="url(#far)">
+          <rect x="-40" y="-40" width="1280" height="480" fill="url(#splash)" />
+          <rect x="-40" y="-40" width="1280" height="480" fill="url(#tiles)" opacity="0.5" />
+          <rect x="-40" y="-40" width="1280" height="480" fill="url(#window)" />
+          <rect x="-40" y="410" width="1280" height="14" fill="#8A8379" opacity="0.45" />
+          <!-- A jar and a cutting board at the back of the counter, just soft shapes. -->
+          <rect x="1010" y="250" width="120" height="175" rx="18" fill="#A9B4AE" opacity="0.5" />
+          <rect x="1020" y="232" width="100" height="26" rx="8" fill="#7E6A55" opacity="0.6" />
+          <rect x="40" y="170" width="190" height="255" rx="20" fill="#C9A47A" opacity="0.55" />
+        </g>
+
+        <!-- The counter: sharp near the mug, softer toward the wall. -->
+        <use href="#counterArt" />
+        <use href="#counterArt" filter="url(#mid)" mask="url(#backCounter)" />
+
+        <!-- The packing paper it came in, pushed aside: folded facets, out of focus. -->
+        <g filter="url(#mid)">
+          <path d="M-40 600 L70 572 L150 610 L118 664 Z" fill="#C79A63" />
+          <path d="M-40 600 L118 664 L60 738 L-40 760 Z" fill="#A87A47" />
+          <path d="M118 664 L150 610 L232 650 L214 724 Z" fill="#B88A55" />
+          <path d="M60 738 L118 664 L214 724 L170 812 Z" fill="#94683A" />
+          <path d="M-40 760 L60 738 L170 812 L120 940 L-40 940 Z" fill="#B48552" />
+          <path d="M170 812 L214 724 L262 790 L236 880 Z" fill="#A27445" />
+          <path d="M120 940 L170 812 L236 880 L216 940 Z" fill="#8C6236" />
+          <path
+            d="M-40 600 L70 572 L150 610 L232 650 L262 790 L236 880"
+            fill="none"
+            stroke="#E2BE8E"
+            stroke-width="3"
+            opacity="0.6"
+          />
+          <path d="M1240 610 L1150 596 L1086 640 L1132 690 L1240 700 Z" fill="#B88A55" />
+          <path d="M1086 640 L1040 700 L1132 690 Z" fill="#9C6F41" />
+          <path d="M1040 700 L1132 690 L1240 700 L1240 760 L1090 752 Z" fill="#C49663" />
+        </g>
+        <g filter="url(#mid)" opacity="0.5">
+          <path d="M-40 600 L70 572 L150 610 L118 664 Z" fill="#C79A63" filter="url(#kraft)" />
+          <path
+            d="M-40 760 L60 738 L170 812 L120 940 L-40 940 Z"
+            fill="#B48552"
+            filter="url(#kraft)"
+          />
+        </g>
+
+        <!-- A faint reflection in the counter, then shadows away from the window. -->
+        <path
+          d="M700 702 C820 690 990 700 1100 732 C1140 762 1090 804 990 806 L700 796 Z"
+          fill="#2A1A0C"
+          opacity="0.32"
+          filter="url(#shadow)"
+        />
+        <ellipse
+          cx="600"
+          cy="752"
+          rx="194"
+          ry="50"
+          fill="#140904"
+          opacity="0.5"
+          filter="url(#contact)"
+        />
+        <ellipse
+          cx="600"
+          cy="790"
+          rx="170"
+          ry="14"
+          fill="#0E0602"
+          opacity="0.55"
+          filter="url(#contact)"
+        />
+        <use href="#mug" />
       </g>
 
-      <!-- The crack: from a chip in the rim down the lit side, with chipped glaze along it. -->
-      <g filter="url(#hair)">
-        <path d="M485 345 L487 356 L489 368 L485 380 L484 393 L489 405 L491 420 L488 433 L487 447 L493 462 L496 478 L493 492 L492 506 L497 522 L500 539 L498 553 L497 566 L501 579 L503 590" fill="none" stroke="#E9B497" stroke-width="1.6" opacity="0.5" transform="translate(1.9 0.3)"/>
-        <path d="M485 345 L487 356 L489 368 L485 380 L484 393 L489 405 L491 420 L488 433 L487 447 L493 462 L496 478 L493 492 L492 506 L497 522 L500 539 L498 553 L497 566 L501 579 L503 590" fill="none" stroke="#2A0D05" stroke-width="2.4" stroke-linejoin="round" opacity="0.92"/>
-        <path d="M487 447 L478 456 L471 467 L469 481 L466 494 L461 506 L456 518" fill="none" stroke="#F1C3A8" stroke-width="1.5" opacity="0.5" transform="translate(1.8 0.4)"/>
-        <path d="M487 447 L478 456 L471 467 L469 481 L466 494 L461 506 L456 518" fill="none" stroke="#2A0D05" stroke-width="1.7" stroke-linejoin="round" opacity="0.9"/>
-        <path d="M496 478 L505 488 L510 500 L511 511" fill="none" stroke="#2A0D05" stroke-width="1.1" opacity="0.85"/>
-      </g>
-      <path d="M480 350 L500 350 L506 596 L486 596 Z" fill="#1A0602" opacity="0.12" filter="url(#softer)"/>
-
-      <!-- The rim, and the inside of the mug. -->
-      <ellipse cx="600" cy="300" rx="205" ry="52" fill="#A9492D"/>
-      <ellipse cx="600" cy="300" rx="198" ry="49" fill="none" stroke="#D08E70" stroke-width="5" opacity="0.7" filter="url(#hair)"/>
-      <path d="M398 303 A203 50 0 0 0 802 303" fill="none" stroke="#F4C9AE" stroke-width="2.5" opacity="0.55" filter="url(#hair)"/>
-      <g clip-path="url(#mouth)">
-        <rect x="400" y="240" width="400" height="130" fill="url(#inside)"/>
-        <rect x="400" y="240" width="400" height="130" fill="url(#insideDepth)"/>
-        <!-- The wax sits below the rim; the front of the mug hides its near edge. -->
-        <ellipse cx="600" cy="334" rx="185" ry="44" fill="url(#wax)"/>
-        <ellipse cx="600" cy="334" rx="185" ry="44" filter="url(#clay)" opacity="0.15"/>
-        <ellipse cx="600" cy="300" rx="191" ry="46" fill="none" stroke="#1E0803" stroke-width="18" opacity="0.32" filter="url(#soft)"/>
-        <!-- The wax split along the crack, from the rim toward the wick. -->
-        <path d="M486 341 L497 338 L509 337 L521 340 L533 336 L547 334 L560 336 L574 332 L585 331" fill="none" stroke="#6E553B" stroke-width="3" stroke-linejoin="round" opacity="0.9" filter="url(#hair)"/>
-        <path d="M486 343 L497 340 L509 339 L521 342 L533 338 L547 336 L560 338 L574 334 L585 333" fill="none" stroke="#FFF8EE" stroke-width="1.1" opacity="0.6"/>
-        <!-- The wick: unburned cotton, leaning a little, and its shadow. -->
-        <path d="M601 336 C610 335 620 336 628 338" fill="none" stroke="#7D6649" stroke-width="5" opacity="0.35" filter="url(#soft)"/>
-        <path d="M600 336 C600 322 603 311 598 299" fill="none" stroke="#F2EBDD" stroke-width="4.5" stroke-linecap="round"/>
-        <path d="M601.6 335 C601.6 323 604 313 600 302" fill="none" stroke="#A3967F" stroke-width="1.4" stroke-linecap="round" opacity="0.8"/>
-      </g>
-      <!-- A chip out of the rim where the crack starts, showing the clay. -->
-      <path d="M473 339 L495 338 L490 345 L486 352 Z" fill="#D2B193"/>
-      <path d="M473 339 L495 338 L490 345 L486 352 Z" fill="none" stroke="#2E0E05" stroke-width="1.3" opacity="0.8" filter="url(#hair)"/>
-    </g>
-  </defs>
-
-  <!-- Held by hand: a little tilted. -->
-  <g filter="url(#lens)" transform="rotate(0.9 600 450) scale(1.03) translate(-16 -12)">
-    <!-- Kitchen, far out of focus. -->
-    <g filter="url(#far)">
-      <rect x="-40" y="-40" width="1280" height="480" fill="url(#splash)"/>
-      <rect x="-40" y="-40" width="1280" height="480" fill="url(#tiles)" opacity="0.5"/>
-      <rect x="-40" y="-40" width="1280" height="480" fill="url(#window)"/>
-      <rect x="-40" y="410" width="1280" height="14" fill="#8A8379" opacity="0.45"/>
-      <!-- A jar and a cutting board at the back of the counter, just soft shapes. -->
-      <rect x="1010" y="250" width="120" height="175" rx="18" fill="#A9B4AE" opacity="0.5"/>
-      <rect x="1020" y="232" width="100" height="26" rx="8" fill="#7E6A55" opacity="0.6"/>
-      <rect x="40" y="170" width="190" height="255" rx="20" fill="#C9A47A" opacity="0.55"/>
-    </g>
-
-    <!-- The counter: sharp near the mug, softer toward the wall. -->
-    <use href="#counterArt"/>
-    <use href="#counterArt" filter="url(#mid)" mask="url(#backCounter)"/>
-
-    <!-- The packing paper it came in, pushed aside: folded facets, out of focus. -->
-    <g filter="url(#mid)">
-      <path d="M-40 600 L70 572 L150 610 L118 664 Z" fill="#C79A63"/>
-      <path d="M-40 600 L118 664 L60 738 L-40 760 Z" fill="#A87A47"/>
-      <path d="M118 664 L150 610 L232 650 L214 724 Z" fill="#B88A55"/>
-      <path d="M60 738 L118 664 L214 724 L170 812 Z" fill="#94683A"/>
-      <path d="M-40 760 L60 738 L170 812 L120 940 L-40 940 Z" fill="#B48552"/>
-      <path d="M170 812 L214 724 L262 790 L236 880 Z" fill="#A27445"/>
-      <path d="M120 940 L170 812 L236 880 L216 940 Z" fill="#8C6236"/>
-      <path d="M-40 600 L70 572 L150 610 L232 650 L262 790 L236 880" fill="none" stroke="#E2BE8E" stroke-width="3" opacity="0.6"/>
-      <path d="M1240 610 L1150 596 L1086 640 L1132 690 L1240 700 Z" fill="#B88A55"/>
-      <path d="M1086 640 L1040 700 L1132 690 Z" fill="#9C6F41"/>
-      <path d="M1040 700 L1132 690 L1240 700 L1240 760 L1090 752 Z" fill="#C49663"/>
-    </g>
-    <g filter="url(#mid)" opacity="0.5">
-      <path d="M-40 600 L70 572 L150 610 L118 664 Z" fill="#C79A63" filter="url(#kraft)"/>
-      <path d="M-40 760 L60 738 L170 812 L120 940 L-40 940 Z" fill="#B48552" filter="url(#kraft)"/>
-    </g>
-
-    <!-- A faint reflection in the counter, then shadows away from the window. -->
-    <path d="M700 702 C820 690 990 700 1100 732 C1140 762 1090 804 990 806 L700 796 Z" fill="#2A1A0C" opacity="0.32" filter="url(#shadow)"/>
-    <ellipse cx="600" cy="752" rx="194" ry="50" fill="#140904" opacity="0.5" filter="url(#contact)"/>
-    <ellipse cx="600" cy="790" rx="170" ry="14" fill="#0E0602" opacity="0.55" filter="url(#contact)"/>
-    <use href="#mug"/>
-  </g>
-
-  <!-- Grain, vignette and a warm cast. -->
-  <rect width="1200" height="900" filter="url(#noise)" style="mix-blend-mode: overlay"/>
-  <rect width="1200" height="900" fill="url(#vignette)"/>
-  <rect width="1200" height="900" fill="#FFB25A" opacity="0.035" style="mix-blend-mode: multiply"/>
-</svg>
-</body>
+      <!-- Grain, vignette and a warm cast. -->
+      <rect width="1200" height="900" filter="url(#noise)" style="mix-blend-mode: overlay" />
+      <rect width="1200" height="900" fill="url(#vignette)" />
+      <rect
+        width="1200"
+        height="900"
+        fill="#FFB25A"
+        opacity="0.035"
+        style="mix-blend-mode: multiply"
+      />
+    </svg>
+  </body>
 </html>

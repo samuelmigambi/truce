@@ -6,10 +6,15 @@ import { PayPalExtras } from "./extras";
 export { PayPal, PayPalError } from "./client";
 export { PayPalExtras } from "./extras";
 
+/**
+ * The demo storefront's own PayPal app (/shop), from the server's environment. Shops never use
+ * it: each connects its own app (see connection.ts).
+ */
+
 let client: PayPal | null | undefined;
 let extras: PayPalExtras | null | undefined;
 
-/** The PayPal client from PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET (Secret Manager), or null without them. */
+/** The storefront's client, from PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET, or null without them. */
 export function paypal(): PayPal | null {
   if (client !== undefined) return client;
   const config = paypalConfigFromEnv();
@@ -25,7 +30,7 @@ export function paypalExtras(): PayPalExtras | null {
   return extras;
 }
 
-/** The ID of the webhook registered for this app in PayPal's developer dashboard; not a secret. */
+/** The webhook registered on the storefront's app before shops had their own; not a secret. */
 export function paypalWebhookId(
   env: Record<string, string | undefined> = process.env,
 ): string | null {

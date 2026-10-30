@@ -67,7 +67,7 @@ export function Gauge({
         <path
           d={arc}
           fill="none"
-          stroke="rgb(30 38 20 / 0.07)"
+          stroke="var(--color-line-soft)"
           strokeWidth="14"
           strokeLinecap="round"
         />

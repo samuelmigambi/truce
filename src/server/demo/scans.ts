@@ -1,32 +1,32 @@
 import "server-only";
 
-import type { Order, OrderStatus, TrackingEvent, Workspace } from "@/lib/domain";
+import type { Order, OrderStatus, Shop, TrackingEvent } from "@/lib/domain";
 import type { Store } from "@/server/store";
 
 /**
- * Simulated carrier scans in demo copies arrive over time, like real ones: scans still in the
+ * Simulated carrier scans in sample shops arrive over time, like real ones: scans still in the
  * future wait in the cache, outside the order, so nothing reading an order (the agent included)
  * can see a delivery before it happens. Reads play the ones whose time has come.
  */
 
-/** Order ID to its scans still to come, for one demo copy. */
+/** Order ID to its scans still to come, for one sample shop. */
 export type PendingScans = Record<string, TrackingEvent[]>;
 
-/** Where a demo copy's scans still to come are kept, in the shared cache. */
-export const pendingScansKey = (workspaceId: string) => `scans:${workspaceId}`;
-/** Longer than a demo copy lives. */
-export const PENDING_SCANS_TTL_SECONDS = 10 * 24 * 60 * 60;
+/** Where a sample shop's scans still to come are kept, in the shared cache. */
+export const pendingScansKey = (shopId: string) => `scans:${shopId}`;
+/** Every simulated parcel has arrived well within this. */
+export const PENDING_SCANS_TTL_SECONDS = 30 * 24 * 60 * 60;
 
-export async function loadPendingScans(store: Store, workspaceId: string): Promise<PendingScans> {
-  return (await store.getCached<PendingScans>(pendingScansKey(workspaceId))) ?? {};
+export async function loadPendingScans(store: Store, shopId: string): Promise<PendingScans> {
+  return (await store.getCached<PendingScans>(pendingScansKey(shopId))) ?? {};
 }
 
 export async function savePendingScans(
   store: Store,
-  workspaceId: string,
+  shopId: string,
   pending: PendingScans,
 ): Promise<void> {
-  await store.setCached(pendingScansKey(workspaceId), pending, PENDING_SCANS_TTL_SECONDS);
+  await store.setCached(pendingScansKey(shopId), pending, PENDING_SCANS_TTL_SECONDS);
 }
 
 /** Splits a scan schedule into what has happened by `now` and what's still to come. */
@@ -76,13 +76,13 @@ export function withScans(order: Order, scans: TrackingEvent[]): Order {
  */
 export async function catchUpScans(
   store: Store,
-  workspace: Workspace,
+  shop: Shop,
   orders: Order[],
   now: number,
   preloaded?: PendingScans,
 ): Promise<Order[]> {
-  if (workspace.kind !== "demo") return orders;
-  const pending = structuredClone(preloaded ?? (await loadPendingScans(store, workspace.id)));
+  if (shop.kind !== "sample") return orders;
+  const pending = structuredClone(preloaded ?? (await loadPendingScans(store, shop.id)));
   let changed = false;
   const updated = await Promise.all(
     orders.map(async (order) => {
@@ -94,10 +94,10 @@ export async function catchUpScans(
       if (future.length) pending[order.id] = future;
       else delete pending[order.id];
       const next = withScans(order, past);
-      await store.saveOrder(workspace.id, next);
+      await store.saveOrder(shop.id, next);
       return next;
     }),
   );
-  if (changed) await savePendingScans(store, workspace.id, pending);
+  if (changed) await savePendingScans(store, shop.id, pending);
   return updated;
 }

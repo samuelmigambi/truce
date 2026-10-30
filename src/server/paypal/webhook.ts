@@ -1,5 +1,6 @@
 import "server-only";
 
+import { log } from "@/server/log";
 import type { PayPalExtras, WebhookSignature } from "./extras";
 
 /**
@@ -38,7 +39,7 @@ export async function verifyWebhook(
   try {
     return await extras.verifyWebhookSignature(webhookId, signature, event);
   } catch (error) {
-    console.error("[paypal] webhook verification failed", error);
+    log.warn("paypal.webhook_verify_failed", { error });
     return false;
   }
 }

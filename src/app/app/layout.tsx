@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
-import { AppShell } from "@/components/app/app-shell";
+import { requirePageUser } from "@/server/auth/pages";
 
 export const metadata: Metadata = {
   title: { default: "Cases", template: "%s · Truce" },
   robots: { index: false },
 };
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return <AppShell>{children}</AppShell>;
+/** Every app page needs a signed-in person; the shop's own layout then checks the shop. */
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  await requirePageUser("/app");
+  return children;
 }

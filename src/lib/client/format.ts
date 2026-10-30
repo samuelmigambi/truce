@@ -5,48 +5,83 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
 /**
- * Times show in the shop's own time zone (Wick & Ember is in Portland), the same one the agent
- * writes in, so an order's day never differs between the timeline and a draft.
+ * Times show in the shop's own time zone, the same one the agent writes in, so an order's day
+ * never differs between the timeline and a draft. Each zone's formatters are made once.
  */
-export const SHOP_TIME_ZONE = "America/Los_Angeles";
+interface ZoneFormats {
+  date: Intl.DateTimeFormat;
+  dateYear: Intl.DateTimeFormat;
+  time: Intl.DateTimeFormat;
+  weekday: Intl.DateTimeFormat;
+  /** Year, month and day as numbers, for comparing calendar days. */
+  parts: Intl.DateTimeFormat;
+}
 
-const shortDate = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  timeZone: SHOP_TIME_ZONE,
-});
-const shortDateYear = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  timeZone: SHOP_TIME_ZONE,
-});
-const time = new Intl.DateTimeFormat("en-US", {
-  hour: "numeric",
-  minute: "2-digit",
-  timeZone: SHOP_TIME_ZONE,
-});
-const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: SHOP_TIME_ZONE });
+const zones = new Map<string, ZoneFormats>();
+
+function make(timeZone: string): ZoneFormats {
+  return {
+    date: new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone }),
+    dateYear: new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone,
+    }),
+    time: new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone }),
+    weekday: new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone }),
+    parts: new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      timeZone,
+    }),
+  };
+}
+
+function formatsFor(timeZone: string): ZoneFormats {
+  let found = zones.get(timeZone);
+  if (!found) {
+    try {
+      found = make(timeZone);
+    } catch {
+      // A zone this browser doesn't know shouldn't break the screen; UTC is at least honest.
+      found = make("UTC");
+    }
+    zones.set(timeZone, found);
+  }
+  return found;
+}
+
+/** The calendar day an instant falls on in the zone: year, and days since 1970. */
+function calendarDay(date: Date, timeZone: string): { year: number; index: number } {
+  const parts = formatsFor(timeZone).parts.formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const year = get("year");
+  return { year, index: Math.round(Date.UTC(year, get("month") - 1, get("day")) / DAY) };
+}
 
 /** "Oct 25", or "Oct 25, 2025" outside this year. */
-export function formatDate(iso: string, now: number): string {
+export function formatDate(iso: string, now: number, timeZone: string): string {
   const date = new Date(iso);
-  return date.getFullYear() === new Date(now).getFullYear()
-    ? shortDate.format(date)
-    : shortDateYear.format(date);
+  const f = formatsFor(timeZone);
+  return calendarDay(date, timeZone).year === calendarDay(new Date(now), timeZone).year
+    ? f.date.format(date)
+    : f.dateYear.format(date);
 }
 
 /** "Oct 25, 3:40 PM". */
-export function formatDateTime(iso: string, now: number): string {
-  return `${formatDate(iso, now)}, ${time.format(new Date(iso))}`;
+export function formatDateTime(iso: string, now: number, timeZone: string): string {
+  return `${formatDate(iso, now, timeZone)}, ${formatTime(iso, timeZone)}`;
 }
 
-export function formatTime(iso: string): string {
-  return time.format(new Date(iso));
+export function formatTime(iso: string, timeZone: string): string {
+  return formatsFor(timeZone).time.format(new Date(iso));
 }
 
 /** "Just now", "12 min ago", "3 hours ago", "Yesterday", "4 days ago", then the date. */
-export function timeAgo(iso: string, now: number): string {
+export function timeAgo(iso: string, now: number, timeZone: string): string {
   const diff = now - new Date(iso).getTime();
   if (diff < MINUTE) return "Just now";
   if (diff < HOUR) return `${Math.floor(diff / MINUTE)} min ago`;
@@ -57,35 +92,17 @@ export function timeAgo(iso: string, now: number): string {
   const days = Math.floor(diff / DAY);
   if (days === 1) return "Yesterday";
   if (days < 7) return `${days} days ago`;
-  return formatDate(iso, now);
+  return formatDate(iso, now, timeZone);
 }
 
-/** "Today", "Yesterday", "Mon", or a date: for grouping a timeline. */
-export function dayLabel(iso: string, now: number): string {
+/** "Today", "Yesterday", "Mon", or a date, counted in the shop's calendar days. */
+export function dayLabel(iso: string, now: number, timeZone: string): string {
   const date = new Date(iso);
-  const today = new Date(now);
-  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((startOf(today) - startOf(date)) / DAY);
+  const days = calendarDay(new Date(now), timeZone).index - calendarDay(date, timeZone).index;
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
-  if (days > 1 && days < 7) return weekday.format(date);
-  return formatDate(iso, now);
-}
-
-/** A model call's cost in dollars: "$0.0042", "$0.021", "$1.20". */
-export function formatCost(dollars: number | null | undefined): string {
-  if (dollars === null || dollars === undefined) return "Price unknown";
-  if (dollars === 0) return "$0";
-  if (dollars < 0.001) return "<$0.001";
-  if (dollars < 0.01) return `$${dollars.toFixed(4)}`;
-  if (dollars < 1) return `$${dollars.toFixed(3)}`;
-  return `$${dollars.toFixed(2)}`;
-}
-
-/** "1.2k" tokens. */
-export function formatTokens(n: number): string {
-  if (n < 1000) return String(n);
-  return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  if (days > 1 && days < 7) return formatsFor(timeZone).weekday.format(date);
+  return formatDate(iso, now, timeZone);
 }
 
 /** "0.7%". */
@@ -93,7 +110,7 @@ export function formatPercent(ratio: number, digits = 1): string {
   return `${(ratio * 100).toFixed(digits)}%`;
 }
 
-/** "2.4 s" or "640 ms". */
-export function formatMs(ms: number): string {
-  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
+/** "ABcD12…wXyZ": enough of a long ID to recognise it, without the whole thing. */
+export function shortId(id: string, head = 6, tail = 4): string {
+  return id.length <= head + tail + 1 ? id : `${id.slice(0, head)}…${id.slice(-tail)}`;
 }

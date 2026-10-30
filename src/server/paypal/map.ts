@@ -17,7 +17,9 @@ export function reasonOf(code: DisputeReasonCode): DisputeReason {
 }
 
 /** Inquiry while it's still a conversation; a claim once PayPal decides; a chargeback from a card. */
-export function stageOf(dispute: Pick<Dispute, "dispute_life_cycle_stage" | "dispute_channel">): DisputeStage {
+export function stageOf(
+  dispute: Pick<Dispute, "dispute_life_cycle_stage" | "dispute_channel">,
+): DisputeStage {
   if (dispute.dispute_channel === "EXTERNAL") return "chargeback";
   return dispute.dispute_life_cycle_stage === "INQUIRY" ? "inquiry" : "claim";
 }

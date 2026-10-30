@@ -1,16 +1,20 @@
 import "server-only";
 
-import type { Analysis, Case, CaseEvent, Order, Workspace } from "@/lib/domain";
-import type { BulkStore, Versioned, WorkspaceData } from "./bulk";
-import type { Store } from "./types";
+import { summaryOf, type ChatSummary, type ChatThread } from "@/lib/chat-thread";
+import type { Analysis, AppNotification, Case, CaseEvent, Order, Shop, User } from "@/lib/domain";
+import type { BulkStore, ShopData, Versioned } from "./bulk";
+import type { SealedSecret, SecretName, Store } from "./types";
 
-/** One workspace's records, keyed by ID. */
+/** One shop's records, keyed by ID. */
 interface Bucket {
   orders: Map<string, Order>;
   cases: Map<string, Case>;
   /** Case ID to its events, keyed by event ID. */
   events: Map<string, Map<string, CaseEvent>>;
   analyses: Map<string, Analysis>;
+  notifications: Map<string, AppNotification>;
+  /** Keyed by `${uid}/${chatId}`. */
+  chats: Map<string, ChatThread>;
 }
 
 /**
@@ -19,7 +23,9 @@ interface Bucket {
  */
 export class MemoryStore implements Store, BulkStore, Versioned {
   readonly kind = "memory" as const;
-  private workspaces = new Map<string, Workspace>();
+  private users = new Map<string, User>();
+  private shops = new Map<string, Shop>();
+  private secrets = new Map<string, SealedSecret>();
   private buckets = new Map<string, Bucket>();
   private cache = new Map<string, { value: unknown; expiresAt: number | null }>();
   private counters = new Map<string, { window: number; total: number }>();
@@ -29,102 +35,194 @@ export class MemoryStore implements Store, BulkStore, Versioned {
 
   /** Empties everything; for tests. */
   reset(): void {
-    this.workspaces.clear();
+    this.users.clear();
+    this.shops.clear();
+    this.secrets.clear();
     this.buckets.clear();
     this.cache.clear();
     this.counters.clear();
     this.versions.clear();
   }
 
-  version(workspaceId: string): number {
-    return this.versions.get(workspaceId) ?? 0;
+  version(shopId: string): number {
+    return this.versions.get(shopId) ?? 0;
   }
 
-  private touch(workspaceId: string): void {
-    this.versions.set(workspaceId, this.version(workspaceId) + 1);
+  private touch(shopId: string): void {
+    this.versions.set(shopId, this.version(shopId) + 1);
   }
 
-  private bucket(workspaceId: string): Bucket {
-    let bucket = this.buckets.get(workspaceId);
+  private bucket(shopId: string): Bucket {
+    let bucket = this.buckets.get(shopId);
     if (!bucket) {
-      bucket = { orders: new Map(), cases: new Map(), events: new Map(), analyses: new Map() };
-      this.buckets.set(workspaceId, bucket);
+      bucket = {
+        orders: new Map(),
+        cases: new Map(),
+        events: new Map(),
+        analyses: new Map(),
+        notifications: new Map(),
+        chats: new Map(),
+      };
+      this.buckets.set(shopId, bucket);
     }
     return bucket;
   }
 
-  async getWorkspace(id: string): Promise<Workspace | null> {
-    return copyOrNull(this.workspaces.get(id));
+  async getUser(uid: string): Promise<User | null> {
+    return copyOrNull(this.users.get(uid));
   }
 
-  async saveWorkspace(workspace: Workspace): Promise<void> {
-    this.workspaces.set(workspace.id, copy(workspace));
-    this.touch(workspace.id);
+  async saveUser(user: User): Promise<void> {
+    this.users.set(user.uid, copy(user));
   }
 
-  async clearWorkspace(id: string): Promise<void> {
+  async getShop(id: string): Promise<Shop | null> {
+    return copyOrNull(this.shops.get(id));
+  }
+
+  async saveShop(shop: Shop): Promise<void> {
+    this.shops.set(shop.id, copy(shop));
+    this.touch(shop.id);
+  }
+
+  async listShopsFor(uid: string): Promise<Shop[]> {
+    return [...this.shops.values()].filter((s) => s.memberIds.includes(uid)).map(copy);
+  }
+
+  async listConnectedShops(): Promise<Shop[]> {
+    return [...this.shops.values()].filter((s) => s.kind === "real" && s.paypal).map(copy);
+  }
+
+  async listShopsByPayPalApp(clientIdHash: string): Promise<Shop[]> {
+    return [...this.shops.values()]
+      .filter((s) => s.kind === "real" && s.paypal?.clientIdHash === clientIdHash)
+      .map(copy);
+  }
+
+  async deleteShop(id: string): Promise<void> {
+    this.shops.delete(id);
     this.buckets.delete(id);
+    for (const key of [...this.secrets.keys()])
+      if (key.startsWith(`${id}/`)) this.secrets.delete(key);
     this.touch(id);
   }
 
-  async listOrders(workspaceId: string): Promise<Order[]> {
-    return [...this.bucket(workspaceId).orders.values()].map(copy);
+  async clearShop(id: string): Promise<void> {
+    // Chats aren't the shop's records; clearChats removes them.
+    const chats = this.buckets.get(id)?.chats;
+    this.buckets.delete(id);
+    if (chats?.size) this.bucket(id).chats = chats;
+    this.touch(id);
   }
 
-  async getOrder(workspaceId: string, orderId: string): Promise<Order | null> {
-    return copyOrNull(this.bucket(workspaceId).orders.get(orderId));
+  async getSecret(shopId: string, name: SecretName): Promise<SealedSecret | null> {
+    return copyOrNull(this.secrets.get(`${shopId}/${name}`));
   }
 
-  async saveOrder(workspaceId: string, order: Order): Promise<void> {
-    this.bucket(workspaceId).orders.set(order.id, copy(order));
-    this.touch(workspaceId);
+  async saveSecret(shopId: string, name: SecretName, secret: SealedSecret): Promise<void> {
+    this.secrets.set(`${shopId}/${name}`, copy(secret));
   }
 
-  async listCases(workspaceId: string): Promise<Case[]> {
-    return [...this.bucket(workspaceId).cases.values()].map(copy);
+  async deleteSecret(shopId: string, name: SecretName): Promise<void> {
+    this.secrets.delete(`${shopId}/${name}`);
   }
 
-  async getCase(workspaceId: string, caseId: string): Promise<Case | null> {
-    return copyOrNull(this.bucket(workspaceId).cases.get(caseId));
+  async listOrders(shopId: string): Promise<Order[]> {
+    return [...this.bucket(shopId).orders.values()].map(copy);
   }
 
-  async saveCase(workspaceId: string, kase: Case): Promise<void> {
-    this.bucket(workspaceId).cases.set(kase.id, copy(kase));
-    this.touch(workspaceId);
+  async getOrder(shopId: string, orderId: string): Promise<Order | null> {
+    return copyOrNull(this.bucket(shopId).orders.get(orderId));
   }
 
-  async listEvents(workspaceId: string, caseId: string): Promise<CaseEvent[]> {
-    const events = this.bucket(workspaceId).events.get(caseId);
+  async saveOrder(shopId: string, order: Order): Promise<void> {
+    this.bucket(shopId).orders.set(order.id, copy(order));
+    this.touch(shopId);
+  }
+
+  async listCases(shopId: string): Promise<Case[]> {
+    return [...this.bucket(shopId).cases.values()].map(copy);
+  }
+
+  async getCase(shopId: string, caseId: string): Promise<Case | null> {
+    return copyOrNull(this.bucket(shopId).cases.get(caseId));
+  }
+
+  async saveCase(shopId: string, kase: Case): Promise<void> {
+    this.bucket(shopId).cases.set(kase.id, copy(kase));
+    this.touch(shopId);
+  }
+
+  async listEvents(shopId: string, caseId: string): Promise<CaseEvent[]> {
+    const events = this.bucket(shopId).events.get(caseId);
     return sortEvents([...(events?.values() ?? [])].map(copy));
   }
 
   /** Saving an event with an ID that's already there replaces it, as Firestore does. */
-  async addEvent(workspaceId: string, caseId: string, event: CaseEvent): Promise<void> {
-    const all = this.bucket(workspaceId).events;
+  async addEvent(shopId: string, caseId: string, event: CaseEvent): Promise<void> {
+    const all = this.bucket(shopId).events;
     let events = all.get(caseId);
     if (!events) {
       events = new Map();
       all.set(caseId, events);
     }
     events.set(event.id, copy(event));
-    this.touch(workspaceId);
+    this.touch(shopId);
   }
 
-  async getAnalysis(workspaceId: string, caseId: string): Promise<Analysis | null> {
-    return copyOrNull(this.bucket(workspaceId).analyses.get(caseId));
+  async getAnalysis(shopId: string, caseId: string): Promise<Analysis | null> {
+    return copyOrNull(this.bucket(shopId).analyses.get(caseId));
   }
 
-  async saveAnalysis(workspaceId: string, analysis: Analysis): Promise<void> {
-    this.bucket(workspaceId).analyses.set(analysis.caseId, copy(analysis));
-    this.touch(workspaceId);
+  async saveAnalysis(shopId: string, analysis: Analysis): Promise<void> {
+    this.bucket(shopId).analyses.set(analysis.caseId, copy(analysis));
+    this.touch(shopId);
   }
 
-  async listAnalyses(workspaceId: string): Promise<Analysis[]> {
-    return [...this.bucket(workspaceId).analyses.values()].map(copy);
+  async listAnalyses(shopId: string): Promise<Analysis[]> {
+    return [...this.bucket(shopId).analyses.values()].map(copy);
   }
 
-  async replaceWorkspace(data: WorkspaceData): Promise<void> {
-    const id = data.workspace.id;
+  async listNotifications(shopId: string, limit: number): Promise<AppNotification[]> {
+    return [...this.bucket(shopId).notifications.values()]
+      .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
+      .slice(0, limit)
+      .map(copy);
+  }
+
+  async saveNotification(shopId: string, notification: AppNotification): Promise<void> {
+    this.bucket(shopId).notifications.set(notification.id, copy(notification));
+    this.touch(shopId);
+  }
+
+  async listChats(shopId: string, uid: string, limit: number): Promise<ChatSummary[]> {
+    return [...this.bucket(shopId).chats.values()]
+      .filter((c) => c.uid === uid)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id))
+      .slice(0, limit)
+      .map(summaryOf);
+  }
+
+  async getChat(shopId: string, uid: string, chatId: string): Promise<ChatThread | null> {
+    return copyOrNull(this.bucket(shopId).chats.get(`${uid}/${chatId}`));
+  }
+
+  async saveChat(shopId: string, chat: ChatThread): Promise<void> {
+    this.bucket(shopId).chats.set(`${chat.uid}/${chat.id}`, copy(chat));
+  }
+
+  async deleteChat(shopId: string, uid: string, chatId: string): Promise<void> {
+    this.bucket(shopId).chats.delete(`${uid}/${chatId}`);
+  }
+
+  async clearChats(shopId: string): Promise<void> {
+    this.bucket(shopId).chats.clear();
+  }
+
+  async replaceShop(data: ShopData): Promise<void> {
+    const id = data.shop.id;
+    const notifications = this.buckets.get(id)?.notifications ?? new Map();
+    const chats = this.buckets.get(id)?.chats ?? new Map();
     const bucket: Bucket = {
       orders: new Map(data.orders.map((o) => [o.id, copy(o)])),
       cases: new Map(data.cases.map((c) => [c.id, copy(c)])),
@@ -135,26 +233,13 @@ export class MemoryStore implements Store, BulkStore, Versioned {
         ]),
       ),
       analyses: new Map(),
+      notifications: data.keepNotifications ? notifications : new Map(),
+      chats,
     };
     this.buckets.set(id, bucket);
     for (const entry of data.cache ?? [])
       await this.setCached(entry.key, entry.value, entry.ttlSeconds);
-    this.workspaces.set(id, copy(data.workspace));
-    this.touch(id);
-  }
-
-  async expiredWorkspaces(now: Date, limit: number): Promise<string[]> {
-    return [...this.workspaces.values()]
-      .filter((w) => w.expiresAt !== null && Date.parse(w.expiresAt) <= now.getTime())
-      .sort((a, b) => (a.expiresAt ?? "").localeCompare(b.expiresAt ?? ""))
-      .slice(0, limit)
-      .map((w) => w.id);
-  }
-
-  async deleteWorkspace(id: string, cacheKeys: string[] = []): Promise<void> {
-    this.workspaces.delete(id);
-    this.buckets.delete(id);
-    for (const key of cacheKeys) this.cache.delete(key);
+    this.shops.set(id, copy(data.shop));
     this.touch(id);
   }
 

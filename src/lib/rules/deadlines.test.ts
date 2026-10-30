@@ -18,7 +18,10 @@ describe("deadlines", () => {
   });
 
   it("says it plainly", () => {
-    expect(dueLabel(inHours(20), now)).toBe("Due today");
+    expect(dueLabel(inHours(20), now)).toBe("Due in 20 hours");
+    expect(dueLabel(inHours(0.5), now)).toBe("Due within the hour");
+    expect(dueLabel(inHours(24), now)).toBe("Due in 24 hours");
+    expect(dueLabel(inHours(25), now)).toBe("Due in 2 days");
     expect(dueLabel(inHours(72), now)).toBe("Due in 3 days");
     expect(dueLabel(inHours(-30), now)).toBe("Overdue by 1 day");
     expect(dueLabel(inHours(-60), now)).toBe("Overdue by 2 days");

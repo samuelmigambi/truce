@@ -4,14 +4,15 @@ import { mutate } from "swr";
 import type { AnalysisEvent, CaseResponse } from "@/lib/api-types";
 import type { Analysis, AnalysisStepId } from "@/lib/domain";
 import { readEvents } from "@/lib/sse";
-import { errorMessage, openStream } from "./api";
-import { caseKey } from "./hooks";
+import { errorMessage, openStream, shopApi } from "./api";
+import { keys } from "./hooks";
 import { STEPS } from "./labels";
 import { createStore, useStore } from "./store";
 
 /**
- * Live analysis runs, one per case, reduced from the AnalysisEvent stream. A run keeps going if
- * the seller leaves the case file; the inbox shows it as "Analyzing".
+ * Live analysis runs, reduced from the AnalysisEvent stream, kept per shop and then per case.
+ * Sample shops share case IDs, so a run always belongs to one shop. A run keeps going if the
+ * seller leaves the case file; the inbox shows it as "Analyzing".
  */
 
 export interface ToolRun {
@@ -54,12 +55,16 @@ export interface AnalysisRun {
   cost: number;
 }
 
-type Runs = Record<string, AnalysisRun>;
+/** One shop's runs, by case. */
+export type ShopRuns = Record<string, AnalysisRun>;
 
-const runs = createStore<Runs>({});
+const runs = createStore<Record<string, ShopRuns>>({});
 const controllers = new Map<string, AbortController>();
+const NONE: ShopRuns = {};
 
-function freshRun(caseId: string): AnalysisRun {
+const controllerKey = (shopId: string, caseId: string) => `${shopId}\n${caseId}`;
+
+function freshRun(caseId: string, startedAt = Date.now()): AnalysisRun {
   return {
     caseId,
     status: "running",
@@ -68,16 +73,30 @@ function freshRun(caseId: string): AnalysisRun {
     result: null,
     replayed: false,
     error: null,
-    startedAt: Date.now(),
+    startedAt,
     endedAt: null,
     cost: 0,
   };
 }
 
-function updateRun(caseId: string, update: (run: AnalysisRun) => AnalysisRun) {
+/** A run about to start, for the moment before it does: every step still to come. */
+export function waitingRun(caseId: string): AnalysisRun {
+  return freshRun(caseId, 0);
+}
+
+function setRun(shopId: string, caseId: string, run: AnalysisRun | null) {
   runs.set((all) => {
-    const run = all[caseId];
-    return run ? { ...all, [caseId]: update(run) } : all;
+    const shop = { ...(all[shopId] ?? NONE) };
+    if (run) shop[caseId] = run;
+    else delete shop[caseId];
+    return { ...all, [shopId]: shop };
+  });
+}
+
+function updateRun(shopId: string, caseId: string, update: (run: AnalysisRun) => AnalysisRun) {
+  runs.set((all) => {
+    const run = all[shopId]?.[caseId];
+    return run ? { ...all, [shopId]: { ...all[shopId], [caseId]: update(run) } } : all;
   });
 }
 
@@ -172,40 +191,42 @@ export function reduceAnalysis(run: AnalysisRun, event: AnalysisEvent, at: numbe
 
 /**
  * Starts an analysis for a case, unless one is already running. `live` asks for a fresh run
- * instead of a replay of the recorded one.
+ * instead of a replay of the recorded one (sample shops only; real shops always run live).
  */
-export function startAnalysis(caseId: string, options: { live?: boolean } = {}) {
-  if (runs.get()[caseId]?.status === "running") return;
+export function startAnalysis(shopId: string, caseId: string, options: { live?: boolean } = {}) {
+  if (runs.get()[shopId]?.[caseId]?.status === "running") return;
+  const key = controllerKey(shopId, caseId);
   const controller = new AbortController();
-  controllers.set(caseId, controller);
-  runs.set((all) => ({ ...all, [caseId]: freshRun(caseId) }));
+  controllers.set(key, controller);
+  setRun(shopId, caseId, freshRun(caseId));
   void (async () => {
     try {
       const response = await openStream(
-        `/api/cases/${encodeURIComponent(caseId)}/analyze${options.live ? "?live=1" : ""}`,
+        shopApi(
+          shopId,
+          `cases/${encodeURIComponent(caseId)}/analyze${options.live ? "?live=1" : ""}`,
+        ),
         {},
         controller.signal,
       );
       let finished = false;
       for await (const event of readEvents<AnalysisEvent>(response, controller.signal)) {
-        updateRun(caseId, (run) => reduceAnalysis(run, event, Date.now()));
+        updateRun(shopId, caseId, (run) => reduceAnalysis(run, event, Date.now()));
         if (event.type === "result") {
           finished = true;
           const analysis = event.analysis;
           await mutate<CaseResponse>(
-            caseKey(caseId),
+            keys.case(shopId, caseId),
             (data) => (data ? { ...data, analysis } : data),
-            {
-              revalidate: true,
-            },
+            { revalidate: true },
           );
-          void mutate("/api/cases");
-          void mutate("/api/metrics");
+          void mutate(keys.cases(shopId));
+          void mutate(keys.metrics(shopId));
         }
         if (event.type === "error") finished = true;
       }
       if (!finished && !controller.signal.aborted) {
-        updateRun(caseId, (run) =>
+        updateRun(shopId, caseId, (run) =>
           reduceAnalysis(
             run,
             { type: "error", message: "The analysis stopped before it finished. Try again." },
@@ -215,36 +236,49 @@ export function startAnalysis(caseId: string, options: { live?: boolean } = {}) 
       }
     } catch (error) {
       if (controller.signal.aborted) return;
-      updateRun(caseId, (run) =>
+      updateRun(shopId, caseId, (run) =>
         reduceAnalysis(run, { type: "error", message: errorMessage(error) }, Date.now()),
       );
     } finally {
-      if (controllers.get(caseId) === controller) controllers.delete(caseId);
+      if (controllers.get(key) === controller) controllers.delete(key);
     }
   })();
 }
 
-export function cancelAnalysis(caseId: string) {
-  controllers.get(caseId)?.abort();
-  controllers.delete(caseId);
+export function cancelAnalysis(shopId: string, caseId: string) {
+  const key = controllerKey(shopId, caseId);
+  controllers.get(key)?.abort();
+  controllers.delete(key);
+  setRun(shopId, caseId, null);
+}
+
+/** Forgets a finished run, so the case file shows the saved analysis. */
+export function clearAnalysis(shopId: string, caseId: string) {
+  if (runs.get()[shopId]?.[caseId]?.status === "running") return;
+  cancelAnalysis(shopId, caseId);
+}
+
+/** Stops and forgets every run in a shop: after it starts over, or once it's deleted. */
+export function forgetAnalyses(shopId: string) {
+  for (const [key, controller] of controllers) {
+    if (key.startsWith(`${shopId}\n`)) {
+      controller.abort();
+      controllers.delete(key);
+    }
+  }
   runs.set((all) => {
-    const { [caseId]: _gone, ...rest } = all;
-    void _gone;
+    if (!all[shopId]) return all;
+    const rest = { ...all };
+    delete rest[shopId];
     return rest;
   });
 }
 
-/** Forgets a finished run, so the case file shows the saved analysis. */
-export function clearAnalysis(caseId: string) {
-  if (runs.get()[caseId]?.status === "running") return;
-  cancelAnalysis(caseId);
+export function useAnalysisRun(shopId: string, caseId: string): AnalysisRun | null {
+  return useStore(runs, (all) => all[shopId]?.[caseId] ?? null);
 }
 
-export function useAnalysisRun(caseId: string): AnalysisRun | null {
-  return useStore(runs, (all) => all[caseId] ?? null);
-}
-
-/** Cases with an analysis streaming right now. */
-export function useRunningAnalyses(): Runs {
-  return useStore(runs);
+/** The shop's runs by case, including the ones streaming right now. */
+export function useRunningAnalyses(shopId: string): ShopRuns {
+  return useStore(runs, (all) => all[shopId] ?? NONE);
 }

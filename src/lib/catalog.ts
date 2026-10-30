@@ -19,7 +19,13 @@ export const SHOP: ShopInfo = {
   tagline: "Small-batch candles, poured by hand in Portland, Oregon.",
   city: "Portland, Oregon",
   email: "hello@wickandember.example",
-  address: { line1: "2140 SE Division St", city: "Portland", state: "OR", postalCode: "97202", country: "US" },
+  address: {
+    line1: "2140 SE Division St",
+    city: "Portland",
+    state: "OR",
+    postalCode: "97202",
+    country: "US",
+  },
 };
 
 export type Vessel = "tin" | "jar" | "pillar" | "mug" | "box" | "tool";
@@ -117,7 +123,8 @@ export const PRODUCTS: Product[] = [
     name: "Salt & Sea Moss",
     price: 3800,
     blurb: "Sea salt, moss and driftwood, in a large clear jar.",
-    description: "A walk on the Oregon coast: sea salt, damp moss and driftwood. Our biggest single jar.",
+    description:
+      "A walk on the Oregon coast: sea salt, damp moss and driftwood. Our biggest single jar.",
     details: [
       { label: "Size", value: "12 oz jar, 3.4 in wide × 4.1 in tall (8.6 × 10.4 cm)" },
       { label: "Burn time", value: "About 70 hours" },
@@ -133,7 +140,8 @@ export const PRODUCTS: Product[] = [
     name: "Honey & Tobacco",
     price: 3200,
     blurb: "Raw honey, sweet tobacco leaf and a little oak.",
-    description: "Raw honey, sweet tobacco leaf and toasted oak, for long evenings. Smoked glass jar.",
+    description:
+      "Raw honey, sweet tobacco leaf and toasted oak, for long evenings. Smoked glass jar.",
     details: [
       { label: "Size", value: "8 oz jar, 3 in wide × 3.5 in tall (7.6 × 8.9 cm)" },
       { label: "Burn time", value: "About 50 hours" },
@@ -166,7 +174,8 @@ export const PRODUCTS: Product[] = [
     name: "Brass wick trimmer",
     price: 1800,
     blurb: "Trim wicks to a quarter inch for a cleaner burn.",
-    description: "Solid brass with a wide catch plate, so trimmings land on the tool, not in the wax.",
+    description:
+      "Solid brass with a wide catch plate, so trimmings land on the tool, not in the wax.",
     details: [
       { label: "Size", value: "7 in long" },
       { label: "Material", value: "Solid brass" },

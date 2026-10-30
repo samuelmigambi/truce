@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Onest } from "next/font/google";
 import { Providers } from "@/components/providers";
+import { THEME_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
 const onest = Onest({
@@ -34,14 +35,21 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#FAFBF3",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#FAFBF3" },
+    { media: "(prefers-color-scheme: dark)", color: "#18181A" },
+  ],
   width: "device-width",
   initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={onest.variable}>
+    // The head script sets data-theme before React loads, so the server's markup differs there.
+    <html lang="en" className={onest.variable} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body className="bg-cream text-ink min-h-dvh font-sans antialiased">
         <Providers>{children}</Providers>
       </body>

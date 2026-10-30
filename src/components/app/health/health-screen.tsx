@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   BadgeDollarSign,
   Lightbulb,
+  PackageSearch,
   RotateCcw,
   ShieldCheck,
   TrendingUp,
@@ -13,20 +14,18 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { Metrics } from "@/lib/api-types";
-import { errorMessage } from "@/lib/client/api";
-import { formatCost, formatDate, formatPercent } from "@/lib/client/format";
+import { errorMessage, shopHref } from "@/lib/client/api";
+import { formatPercent } from "@/lib/client/format";
 import { useCases, useMetrics } from "@/lib/client/hooks";
-import { fullModelName, modelTier } from "@/lib/client/labels";
-import { useNow } from "@/lib/client/now";
-import { formatUsd } from "@/lib/money";
+import { useMoney, useShop, useShopDates } from "@/lib/client/shop-context";
+import { DISPUTE_FEES } from "@/lib/rules/fees";
 import { RATIO_LINE, RATIO_MIN_SALES } from "@/lib/rules/ratio";
 import { duration, ease } from "../../motion";
-import { Button } from "../../ui/button";
+import { Button, ButtonLink } from "../../ui/button";
 import { Card, CardBody, CardHeader } from "../../ui/card";
-import { Gauge, Legend, Meter, Sparkline, StackedBars, type Series } from "../../ui/charts";
+import { Gauge, Legend, Sparkline, StackedBars, type Series } from "../../ui/charts";
 import { cn } from "../../ui/cn";
 import { EmptyState } from "../../ui/empty-state";
-import { ModelSwatch } from "../../ui/model-badge";
 import { AnimatedNumber, Money } from "../../ui/money";
 import { Skeleton } from "../../ui/skeleton";
 import { Kpi, KpiSkeleton } from "../kpi";
@@ -49,10 +48,7 @@ export function HealthScreen() {
 
   return (
     <Screen>
-      <PageHeader
-        title="Shop health"
-        description="The last 90 days of disputes, and where the shop stands with PayPal"
-      />
+      <PageHeader title="Shop health" />
       {error && !data ? (
         <div className="rounded-card border-line bg-paper mt-8 border">
           <EmptyState
@@ -73,6 +69,7 @@ export function HealthScreen() {
 }
 
 function Body({ metrics }: { metrics: Metrics }) {
+  const money = useMoney();
   return (
     <>
       <div className="mt-6 grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
@@ -91,7 +88,7 @@ function Body({ metrics }: { metrics: Metrics }) {
           value={<Money cents={metrics.feesAvoided} animate delay={0.08} />}
           hint={
             metrics.feesPaid > 0
-              ? `${formatUsd(metrics.feesPaid)} paid in fees`
+              ? `${money(metrics.feesPaid)} paid in fees`
               : "No dispute fees paid"
           }
         />
@@ -120,19 +117,57 @@ function Body({ metrics }: { metrics: Metrics }) {
       </div>
 
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.4fr)]">
-        <RatioCard ratio={metrics.ratio} />
+        {metrics.ratio.known ? (
+          <RatioCard ratio={metrics.ratio} />
+        ) : (
+          <RatioUnknown claims={metrics.ratio.claims} />
+        )}
         <TrendCard weekly={metrics.weekly} />
       </div>
 
-      <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+      <div className="mt-5">
         <PatternsCard patterns={metrics.patterns} />
-        <SpendCard spend={metrics.spend} average={metrics.averageCaseCost} />
       </div>
     </>
   );
 }
 
+/** Without the order history there are no sales to divide by, so there's no honest ratio. */
+function RatioUnknown({ claims }: { claims: number }) {
+  const shop = useShop();
+  return (
+    <Card>
+      <CardHeader
+        title="Claims ratio"
+        description="Claims over sales, three months, against PayPal's 1.5% line"
+      />
+      <CardBody>
+        <div className="flex flex-col items-center px-2 pt-4 pb-2 text-center">
+          <span className="rounded-card bg-mist text-moss-deep flex size-11 items-center justify-center">
+            <PackageSearch className="size-5" />
+          </span>
+          <p className="text-ink mt-4 text-[15px] font-semibold">This needs your order history</p>
+          <p className="text-ink-2 mt-1.5 max-w-[320px] text-[13px] leading-relaxed text-balance">
+            Truce counts {claims} {claims === 1 ? "claim" : "claims"} in three months, but
+            can&rsquo;t see your sales: Transaction Search is off for this PayPal app. Turn it on
+            and the ratio, with your headroom under PayPal&rsquo;s line, shows up here.
+          </p>
+          <ButtonLink
+            href={shopHref(shop.id, "orders")}
+            size="sm"
+            variant="secondary"
+            className="mt-5"
+          >
+            How to turn it on
+          </ButtonLink>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 function RatioCard({ ratio }: { ratio: Metrics["ratio"] }) {
+  const money = useMoney();
   const tone = ratio.highVolume ? "risk" : ratio.headroom <= 1 ? "warn" : "good";
   const max = RATIO_LINE * 2;
   return (
@@ -172,7 +207,7 @@ function RatioCard({ ratio }: { ratio: Metrics["ratio"] }) {
           <ShieldCheck className="mt-0.5 size-4 shrink-0" />
           <p>
             {ratio.highVolume
-              ? "Over the line: every claim now costs the $30 high-volume fee, even the ones you win."
+              ? `Over the line: every claim now costs the ${money(DISPUTE_FEES.highVolume)} high-volume fee, even the ones you win.`
               : ratio.headroom === 0
                 ? "One more claim would cross the line. Settling inquiries early keeps them out of the ratio."
                 : `Room for ${ratio.headroom} more ${ratio.headroom === 1 ? "claim" : "claims"} before the line at today's sales.`}
@@ -187,14 +222,14 @@ function RatioCard({ ratio }: { ratio: Metrics["ratio"] }) {
 }
 
 function TrendCard({ weekly }: { weekly: Metrics["weekly"] }) {
-  const now = useNow();
+  const dates = useShopDates();
   const total = weekly.reduce(
     (n, w) => n + w.not_received + w.not_as_described + w.unauthorized + w.other,
     0,
   );
   const data = weekly.map((w) => ({
-    label: formatDate(w.weekStart, now).replace(/^(\w{3}) (\d+)$/, "$1 $2"),
-    title: `Week of ${formatDate(w.weekStart, now)}`,
+    label: dates.date(w.weekStart),
+    title: `Week of ${dates.date(w.weekStart)}`,
     values: {
       not_received: w.not_received,
       not_as_described: w.not_as_described,
@@ -225,6 +260,7 @@ function TrendCard({ weekly }: { weekly: Metrics["weekly"] }) {
 }
 
 function PatternsCard({ patterns }: { patterns: Metrics["patterns"] }) {
+  const shop = useShop();
   const cases = useCases().data?.cases;
   const nameOf = (id: string) => {
     const kase = cases?.find((c) => c.id === id);
@@ -258,7 +294,7 @@ function PatternsCard({ patterns }: { patterns: Metrics["patterns"] }) {
                       {p.caseIds.map((id) => (
                         <Link
                           key={id}
-                          href={`/app/cases/${encodeURIComponent(id)}`}
+                          href={shopHref(shop.id, `cases/${encodeURIComponent(id)}`)}
                           className="rounded-chip border-line bg-paper text-ink-2 hover:border-line-strong hover:text-ink inline-flex h-6 items-center gap-1 border px-2 text-xs font-medium transition-colors"
                         >
                           {nameOf(id)}
@@ -269,74 +305,6 @@ function PatternsCard({ patterns }: { patterns: Metrics["patterns"] }) {
                   )}
                 </div>
               </motion.li>
-            ))}
-          </ul>
-        )}
-      </CardBody>
-    </Card>
-  );
-}
-
-function SpendCard({ spend, average }: { spend: Metrics["spend"]; average: number | null }) {
-  const total = spend.reduce((n, s) => n + s.cost, 0);
-  const max = Math.max(...spend.map((s) => s.cost), 0.0001);
-  const sorted = [...spend].sort((a, b) => b.cost - a.cost);
-  return (
-    <Card>
-      <CardHeader
-        title="Model spend"
-        description="NVIDIA Nemotron on Nebius Token Factory, in this workspace"
-      />
-      <CardBody>
-        <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
-          <div>
-            <p className="text-ink-2 text-xs">Average per case</p>
-            {average === null ? (
-              <p className="text-ink-3 mt-2 text-[15px]">No analyzed cases yet</p>
-            ) : (
-              <p className="text-ink mt-1 text-[28px] leading-none font-semibold tracking-[-0.02em] tabular-nums">
-                {formatCost(average)}
-              </p>
-            )}
-          </div>
-          <div>
-            <p className="text-ink-2 text-xs">Total</p>
-            <p className="text-ink mt-1 text-lg leading-none font-semibold tabular-nums">
-              {formatCost(total)}
-            </p>
-          </div>
-        </div>
-        {sorted.length === 0 ? (
-          <p className="text-ink-2 mt-5 text-sm">
-            No model calls yet. Open a case to run its first analysis.
-          </p>
-        ) : (
-          <ul className="mt-5 space-y-3.5">
-            {sorted.map((s, i) => (
-              <li key={s.model}>
-                <div className="mb-1.5 flex items-center justify-between gap-3 text-[13px]">
-                  <span className="text-ink flex min-w-0 items-center gap-2">
-                    <ModelSwatch tier={modelTier(s.model)} />
-                    <span className="truncate">{fullModelName(s.model)}</span>
-                  </span>
-                  <span className="text-ink-2 shrink-0 tabular-nums">
-                    {s.calls} {s.calls === 1 ? "call" : "calls"} ·{" "}
-                    <span className="text-ink font-medium">{formatCost(s.cost)}</span>
-                  </span>
-                </div>
-                <Meter
-                  value={s.cost}
-                  max={max}
-                  tone={
-                    modelTier(s.model) === "ultra"
-                      ? "ink"
-                      : modelTier(s.model) === "super"
-                        ? "moss"
-                        : "lemon"
-                  }
-                  delay={0.15 + i * 0.06}
-                />
-              </li>
             ))}
           </ul>
         )}
@@ -358,10 +326,7 @@ function HealthSkeleton() {
         <Skeleton className="rounded-card h-[360px]" />
         <Skeleton className="rounded-card h-[360px]" />
       </div>
-      <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <Skeleton className="rounded-card h-64" />
-        <Skeleton className="rounded-card h-64" />
-      </div>
+      <Skeleton className="rounded-card mt-5 h-64" />
     </>
   );
 }

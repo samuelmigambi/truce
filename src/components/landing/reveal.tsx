@@ -29,13 +29,16 @@ export function Reveal({
   );
 }
 
-/** A lemon highlighter stroke that sweeps in behind a few words of the headline. */
+/**
+ * A lemon highlighter stroke that sweeps in behind a few words of the headline. On dark, the words
+ * themselves turn lemon instead, since light text over a lemon stroke would wash out.
+ */
 export function HeroHighlight({ children }: { children: ReactNode }) {
   return (
-    <span className="relative isolate inline-block whitespace-nowrap">
+    <span className="dark:text-lemon relative isolate inline-block whitespace-nowrap">
       <motion.span
         aria-hidden
-        className="bg-lemon absolute inset-x-[-0.06em] bottom-[0.06em] -z-10 h-[0.42em] origin-left rounded-[0.12em]"
+        className="bg-lemon absolute inset-x-[-0.06em] bottom-[0.06em] -z-10 h-[0.42em] origin-left rounded-[0.12em] dark:hidden"
         initial={{ scaleX: 0 }}
         animate={{ scaleX: 1 }}
         transition={{ duration: duration.slower + 0.25, ease: ease.out, delay: 0.45 }}

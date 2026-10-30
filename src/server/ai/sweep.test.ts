@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AnalysisEvent, SweepEvent } from "@/lib/api-types";
+import type { Shop } from "@/lib/domain";
 import { runSweep, type SweepDeps } from "./sweep";
-import { fakeAi, fakeBudget, lastText, memoryStore } from "./testing/fakes";
-import { seeded } from "./testing/fixtures";
+import { fakeAi, fakeBudget, lastText, memoryStore, systemText } from "./testing/fakes";
+import { realShop, seeded } from "./testing/fixtures";
 
 const MODELS = {
   fast: "nvidia/Nemotron-3_5-Lightning",
@@ -11,9 +12,9 @@ const MODELS = {
   embed: "Qwen/Qwen3-Embedding-8B",
 };
 
-async function setup() {
+async function setup(shop?: Shop) {
   const store = memoryStore();
-  const w = await seeded(store);
+  const w = await seeded(store, 0, shop);
   const ai = fakeAi({
     json: {
       record_triage: (body) => ({
@@ -27,7 +28,7 @@ async function setup() {
   const deps = (extra: Partial<SweepDeps> = {}): SweepDeps => ({
     store,
     client: ai.client,
-    workspace: w.workspace,
+    shop: w.shop,
     budget,
     models: MODELS,
     now: () => w.now,
@@ -83,8 +84,8 @@ describe("runSweep", () => {
         (r) => r.model === MODELS.fast && r.chat_template_kwargs?.enable_thinking === false,
       ),
     ).toBe(true);
-    expect((await store.getWorkspace(w.workspace.id))?.lastSweepAt).toBe(w.now.toISOString());
-    expect((await store.listEvents(w.workspace.id, "demo-inr-86")).at(-1)).toMatchObject({
+    expect((await store.getShop(w.shop.id))?.lastSweepAt).toBe(w.now.toISOString());
+    expect((await store.listEvents(w.shop.id, "demo-inr-86")).at(-1)).toMatchObject({
       kind: "note",
       actor: "truce",
       detail: "Summary of Sam Rivera.",
@@ -100,11 +101,11 @@ describe("runSweep", () => {
     expect(again.filter((e) => e.type === "case")).toHaveLength(4);
     expect(again.filter((e) => e.type === "usage")).toHaveLength(0);
     expect(
-      (await store.listEvents(w.workspace.id, "demo-inr-86")).filter((e) => e.kind === "note"),
+      (await store.listEvents(w.shop.id, "demo-inr-86")).filter((e) => e.kind === "note"),
     ).toHaveLength(1);
   });
 
-  it("syncs from PayPal first in the live workspace, and keeps going if PayPal is down", async () => {
+  it("syncs from PayPal first, and keeps going if PayPal is down", async () => {
     const { deps } = await setup();
     const ok = await collect(
       runSweep(deps({ sync: async () => ({ label: "2 disputes updated from PayPal" }) })),
@@ -154,12 +155,44 @@ describe("runSweep", () => {
     const events = await collect(runSweep({ ...deps(), budget: fakeBudget({ spentAlready: 9 }) }));
     expect(events[0]).toMatchObject({
       type: "error",
-      message: expect.stringMatching(/ran the rules only/),
+      message: expect.stringMatching(/tracking and deadlines only/),
     });
     expect(ai.requests).toHaveLength(0);
     expect(events.filter((e) => e.type === "case")[0]).toMatchObject({
       summary: expect.stringMatching(/^Sam Rivera opened an inquiry for item not received/),
     });
     expect(events.at(-1)).toEqual({ type: "done", analyzed: 4, flagged: 1 });
+  });
+});
+
+describe("runSweep, in a real shop", () => {
+  it("counts against the shop's own limit, reads it on its calendar and saves the sweep on it", async () => {
+    const { deps, store, w, ai, budget } = await setup(realShop());
+    const events = await collect(runSweep(deps()));
+    expect(events.at(-1)).toEqual({ type: "done", analyzed: 4, flagged: 1 });
+    expect(budget.rateKeys).toEqual(["sweep:sh_saltbushcandle01"]);
+    expect(systemText(ai.requests[0]!)).toContain("Today is Oct 29, 2026 in the shop's time zone.");
+    expect(ai.requests.every((r) => /Amount in dispute: A\$\d+/.test(lastText(r)))).toBe(true);
+    expect((await store.getShop(w.shop.id))?.lastSweepAt).toBe(w.now.toISOString());
+    expect((await store.getShop(w.shop.id))?.name).toBe("Saltbush Candle Co.");
+  });
+
+  it("writes the rules-only summary in the shop's money, on its calendar", async () => {
+    const { deps } = await setup(realShop());
+    const events = await collect(runSweep({ ...deps(), budget: fakeBudget({ spentAlready: 9 }) }));
+    expect(events.find((e) => e.type === "case" && e.caseId === "demo-inr-86")).toEqual({
+      type: "case",
+      caseId: "demo-inr-86",
+      summary:
+        "Sam Rivera opened an inquiry for item not received on Cedar & Smoke candle trio (A$86) on Oct 27, 2026. USPS shows it delivered Oct 25, 2026. The response is due Nov 6, 2026.",
+    });
+  });
+
+  it("sorts a case again when the shop's currency changes", async () => {
+    const { deps, ai } = await setup(realShop());
+    await collect(runSweep(deps()));
+    const calls = ai.requests.length;
+    await collect(runSweep(deps({ shop: realShop({ currency: "USD" }) })));
+    expect(ai.requests.length).toBe(calls * 2);
   });
 });

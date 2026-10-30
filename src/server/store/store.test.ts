@@ -1,18 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { Analysis, Case, CaseEvent, Order, Workspace } from "@/lib/domain";
+import type { Analysis, Case, CaseEvent, Order, Shop } from "@/lib/domain";
+import { testRealShop } from "@/server/testing/shops";
 import { docId, stripUndefined } from "./firestore";
 import { chooseStore, gcpProject, hasGoogleCredentials } from "./index";
 import { MemoryStore, memoryStore, sortEvents, windowOf } from "./memory";
 
-const workspace: Workspace = {
-  id: "demo-abc",
-  kind: "demo",
-  shopName: "Wick & Ember",
-  createdAt: "2026-10-28T09:00:00.000Z",
-  expiresAt: "2026-11-04T09:00:00.000Z",
-  lastSweepAt: null,
-  seedVersion: null,
-};
+const shop: Shop = testRealShop(undefined, { id: "demo-abc" });
 
 const order: Order = {
   id: "W-1042",
@@ -68,12 +61,12 @@ const event = (id: string, at: string): CaseEvent => ({
 });
 
 describe("MemoryStore", () => {
-  it("keeps each workspace's records apart", async () => {
+  it("keeps each shop's records apart", async () => {
     const store = new MemoryStore();
-    await store.saveWorkspace(workspace);
+    await store.saveShop(shop);
     await store.saveOrder("demo-abc", order);
     await store.saveCase("demo-abc", kase);
-    expect(await store.getWorkspace("demo-abc")).toEqual(workspace);
+    expect(await store.getShop("demo-abc")).toEqual(shop);
     expect(await store.getOrder("demo-abc", "W-1042")).toEqual(order);
     expect(await store.getOrder("demo-other", "W-1042")).toBeNull();
     expect(await store.listCases("demo-other")).toEqual([]);
@@ -105,17 +98,17 @@ describe("MemoryStore", () => {
     ]);
   });
 
-  it("keeps analyses by case and clears a workspace without touching its record", async () => {
+  it("keeps analyses by case and clears a shop without touching its record", async () => {
     const store = new MemoryStore();
     const analysis = { caseId: "demo-inr-86", totalCost: 0.02, steps: [] } as unknown as Analysis;
-    await store.saveWorkspace(workspace);
+    await store.saveShop(shop);
     await store.saveAnalysis("demo-abc", analysis);
     await store.saveOrder("demo-abc", order);
     expect(await store.getAnalysis("demo-abc", "demo-inr-86")).toEqual(analysis);
-    await store.clearWorkspace("demo-abc");
+    await store.clearShop("demo-abc");
     expect(await store.getAnalysis("demo-abc", "demo-inr-86")).toBeNull();
     expect(await store.listOrders("demo-abc")).toEqual([]);
-    expect(await store.getWorkspace("demo-abc")).toEqual(workspace);
+    expect(await store.getShop("demo-abc")).toEqual(shop);
   });
 
   it("expires cached values", async () => {

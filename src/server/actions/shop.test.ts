@@ -7,8 +7,10 @@ vi.mock("next/headers", () => ({
 
 const { PayPal } = await import("@/server/paypal/client");
 const { MemoryStore } = await import("@/server/store/memory");
-const { seedDemo } = await import("@/server/demo/seed");
-const { captureShopOrder, createShopOrder, nextDemoNumber, priceCart } = await import("./shop");
+const { testConnection, testRealShop, testSampleShop, testUser } =
+  await import("@/server/testing/shops");
+const { clientIdHash } = await import("@/server/paypal/connection");
+const { captureShopOrder, createShopOrder, priceCart } = await import("./shop");
 
 const config = { clientId: "id", clientSecret: "secret", base: "https://api-m.sandbox.paypal.com" };
 const ok = (status: number, body: unknown) =>
@@ -154,7 +156,7 @@ describe("checkout", () => {
     ).rejects.toMatchObject({ status: 503 });
   });
 
-  it("captures, then saves the order to the live workspace and the visitor's demo copy", async () => {
+  it("captures, then records the order in every shop connected to the storefront's app", async () => {
     const created = fakePayPal(() => ok(201, { id: "8FB273900B176105E" }));
     await createShopOrder({
       store,
@@ -165,33 +167,36 @@ describe("checkout", () => {
       ],
       requestId: "r",
     });
-    const visitor = await seedDemo(store, {
-      id: "demo-shop-tests-000001",
-      kind: "demo",
-      shopName: "Wick & Ember",
-      createdAt: "2026-10-28T15:20:00.000Z",
-      expiresAt: null,
-      lastSweepAt: null,
-      seedVersion: null,
+    const owner = testUser();
+    const onApp = testRealShop(owner, {
+      id: "sh_onstorefrontapp1",
+      paypal: testConnection({ clientIdHash: clientIdHash("storefront-app") }),
     });
+    const otherApp = testRealShop(owner, {
+      id: "sh_onanotherapp001",
+      paypal: testConnection({ clientIdHash: clientIdHash("another-app") }),
+    });
+    const sample = await testSampleShop(
+      store,
+      "2026-10-28T15:20:00.000Z",
+      owner,
+      "sh_samplestore0001",
+    );
+    await Promise.all([store.saveShop(onApp), store.saveShop(otherApp)]);
+
     const { paypal, calls } = fakePayPal(() => ok(201, captured));
     const result = await captureShopOrder({
       store,
       paypal,
+      clientId: "storefront-app",
       paypalOrderId: "8FB273900B176105E",
-      visitor,
     });
     expect(calls[0]!.url).toBe("/v2/checkout/orders/8FB273900B176105E/capture");
     expect(calls[0]!.headers["PayPal-Request-Id"]).toBe("capture-8FB273900B176105E");
-    expect(result).toEqual({
-      orderId: "W-1103",
-      liveOrderId: "W-1045",
-      status: "COMPLETED",
-      amount: 10600,
-    });
+    expect(result).toEqual({ orderId: "W-1045", status: "COMPLETED", amount: 10600 });
 
-    const liveOrder = (await store.getOrder("live", "W-1045"))!;
-    expect(liveOrder).toMatchObject({
+    const recorded = (await store.getOrder(onApp.id, "W-1045"))!;
+    expect(recorded).toMatchObject({
       paypalOrderId: "8FB273900B176105E",
       captureId: "9D810630R46435349",
       buyer: { name: "John Doe", email: "sb-buyer@personal.example.com" },
@@ -200,21 +205,27 @@ describe("checkout", () => {
       paypalAddress: { line1: "2211 N First St", city: "San Jose" },
       tracking: null,
     });
-    expect(liveOrder.items.map((i) => [i.productId, i.quantity])).toEqual([
+    expect(recorded.items.map((i) => [i.productId, i.quantity])).toEqual([
       ["p-amber-glow-pillar", 1],
       ["p-honey-tobacco", 2],
     ]);
-    expect(await store.getWorkspace("live")).toMatchObject({ kind: "live" });
-    expect((await store.getOrder(visitor.id, "W-1103"))!.captureId).toBe("9D810630R46435349");
+    // Only shops on the same PayPal app get it; a sample shop never does.
+    expect(await store.getOrder(otherApp.id, "W-1045")).toBeNull();
+    expect(
+      (await store.listOrders(sample.id)).some((o) => o.paypalOrderId === "8FB273900B176105E"),
+    ).toBe(false);
 
     // A retried capture lands on the same order, not a new one.
     const again = await captureShopOrder({
       store,
       paypal,
+      clientId: "storefront-app",
       paypalOrderId: "8FB273900B176105E",
-      visitor,
     });
-    expect(again.orderId).toBe("W-1103");
+    expect(again.orderId).toBe("W-1045");
+    expect(
+      (await store.listOrders(onApp.id)).filter((o) => o.paypalOrderId === "8FB273900B176105E"),
+    ).toHaveLength(1);
   });
 
   it("turns PayPal's declines into plain messages", async () => {
@@ -222,17 +233,10 @@ describe("checkout", () => {
       ok(422, { name: "UNPROCESSABLE_ENTITY", details: [{ issue: "INSTRUMENT_DECLINED" }] }),
     );
     await expect(
-      captureShopOrder({ store, paypal, paypalOrderId: "8FB273900B176105E", visitor: null }),
+      captureShopOrder({ store, paypal, clientId: null, paypalOrderId: "8FB273900B176105E" }),
     ).rejects.toMatchObject({
       status: 402,
       message: "PayPal declined that payment. Try another way to pay.",
     });
-  });
-
-  it("numbers a demo copy's new orders after its newest", () => {
-    expect(nextDemoNumber([{ id: "W-1102" }, { id: "W-1103" }, { id: "W-877" }] as never)).toBe(
-      "W-1104",
-    );
-    expect(nextDemoNumber([])).toBe("W-1103");
   });
 });

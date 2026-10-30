@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { createContext, useContext, useSyncExternalStore } from "react";
 
 /**
  * One shared clock for relative times ("Due in 3 days", "2 hours ago"). It ticks every 30 seconds
@@ -29,13 +29,21 @@ function subscribe(listener: () => void) {
   };
 }
 
-const serverNow = now;
+const loadedAt = now;
+
+/**
+ * The moment the server rendered the page, so the browser's first render shows the same
+ * relative times the server wrote ("3 hours ago") and hydration never disagrees. The live clock
+ * takes over right after.
+ */
+export const RenderedAtContext = createContext<number | null>(null);
 
 /** The current time in milliseconds, refreshed every 30 seconds. */
 export function useNow(): number {
+  const renderedAt = useContext(RenderedAtContext);
   return useSyncExternalStore(
     subscribe,
     () => now,
-    () => serverNow,
+    () => renderedAt ?? loadedAt,
   );
 }

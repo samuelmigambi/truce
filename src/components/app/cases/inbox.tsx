@@ -4,26 +4,21 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   ChevronRight,
   CircleCheck,
-  Clock3,
   Inbox as InboxIcon,
-  Moon,
   RotateCcw,
+  ShieldCheck,
   Sparkles,
-  TrendingUp,
-  Wallet,
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import type { CaseSummary } from "@/lib/api-types";
 import type { CaseStatus } from "@/lib/domain";
-import { useRunningAnalyses } from "@/lib/client/analysis";
-import { errorMessage } from "@/lib/client/api";
-import { timeAgo } from "@/lib/client/format";
-import { useCases, useMetrics, useSession } from "@/lib/client/hooks";
+import { useRunningAnalyses, type AnalysisRun } from "@/lib/client/analysis";
+import { errorMessage, shopHref } from "@/lib/client/api";
+import { useCases, useMetrics } from "@/lib/client/hooks";
 import { headlineWithoutMove, STATUS } from "@/lib/client/labels";
-import { useNow } from "@/lib/client/now";
+import { useMoney, useShop } from "@/lib/client/shop-context";
 import { startSweep, useSweep } from "@/lib/client/sweep";
-import { formatUsd } from "@/lib/money";
 import { duration, ease, spring } from "../../motion";
 import { Avatar } from "../../ui/avatar";
 import { Button } from "../../ui/button";
@@ -54,35 +49,34 @@ function sortCases(cases: CaseSummary[], status: CaseStatus): CaseSummary[] {
   return list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+/**
+ * The tab to open on: "Needs you" when anything does, else the first tab with cases in it, so a
+ * shop whose disputes all sit with PayPal doesn't open on an empty list.
+ */
+function firstFilter(cases: CaseSummary[]): CaseStatus {
+  return FILTERS.find((f) => cases.some((c) => c.status === f)) ?? "needs_you";
+}
+
 /** The inbox: what's at stake, what needs the seller, and the overnight check on demand. */
 export function CasesInbox() {
+  const shop = useShop();
   const { data, error, mutate } = useCases();
-  const workspace = useSession().data?.workspace;
-  const sweep = useSweep();
-  const now = useNow();
-  const [filter, setFilter] = useState<CaseStatus>("needs_you");
+  const sweep = useSweep(shop.id);
+  // Until the seller picks a tab, the inbox opens where the cases are.
+  const [chosen, setChosen] = useState<CaseStatus | null>(null);
   const cases = data?.cases ?? [];
-  const open = cases.filter((c) => c.status !== "closed").length;
+  const filter = chosen ?? (data ? firstFilter(cases) : "needs_you");
+  const setFilter = setChosen;
   const visible = sortCases(cases, filter);
 
   return (
     <Screen>
       <PageHeader
         title="Cases"
-        description={
-          data
-            ? `${workspace?.shopName ?? "Your shop"} · ${open} open ${open === 1 ? "case" : "cases"}${
-                workspace?.lastSweepAt
-                  ? ` · last checked ${timeAgo(workspace.lastSweepAt, now).toLowerCase()}`
-                  : ""
-              }`
-            : "Loading your cases"
-        }
         actions={
           <Button
             variant="secondary"
-            icon={<Moon />}
-            onClick={startSweep}
+            onClick={() => startSweep(shop.id)}
             loading={sweep.status === "running"}
           >
             {sweep.status === "running" ? "Checking" : "Run overnight check"}
@@ -126,7 +120,7 @@ export function CasesInbox() {
         ) : !data ? (
           <ListSkeleton />
         ) : (
-          <CaseList cases={visible} filter={filter} />
+          <CaseList cases={visible} filter={filter} none={cases.length === 0} />
         )}
       </div>
     </Screen>
@@ -147,41 +141,47 @@ function SummaryStrip() {
   }
   if (!data) {
     return (
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">
-        <KpiSkeleton />
-        <KpiSkeleton />
-        <KpiSkeleton />
+      <div className="grid grid-cols-3 gap-3 sm:gap-4" aria-busy="true">
+        <KpiSkeleton hint={false} roomy />
+        <KpiSkeleton hint={false} roomy />
+        <KpiSkeleton hint={false} roomy />
       </div>
     );
   }
   return (
-    <div className="grid grid-cols-3 gap-2 sm:gap-3">
+    <div className="grid grid-cols-3 gap-3 sm:gap-4">
+      {/* Phones get the short words, so three tiles fit side by side without cutting any off. */}
       <Kpi
         index={0}
-        label="Money at risk"
-        icon={<Wallet />}
+        roomy
+        label={
+          <>
+            <span className="sm:hidden">At risk</span>
+            <span className="max-sm:hidden">Money at risk</span>
+          </>
+        }
         value={<Money cents={data.moneyAtRisk} animate />}
-        hint={`Across ${data.openCases} open ${data.openCases === 1 ? "case" : "cases"}`}
       />
       <Kpi
         index={1}
-        label="Due this week"
-        icon={<Clock3 />}
-        tone={data.dueSoon > 0 ? "warn" : "default"}
+        roomy
+        label={
+          <>
+            Due<span className="max-sm:hidden"> this week</span>
+            <span className="sm:hidden"> soon</span>
+          </>
+        }
         value={data.dueSoon}
-        hint={data.dueSoon ? "Answer before PayPal decides" : "Nothing due this week"}
       />
       <Kpi
         index={2}
+        roomy
         label={
           <>
             Kept<span className="max-sm:hidden"> this month</span>
           </>
         }
-        icon={<TrendingUp />}
-        tone="good"
         value={<Money cents={data.kept} animate delay={0.1} />}
-        hint={`${formatUsd(data.feesAvoided)} in fees avoided`}
       />
     </div>
   );
@@ -206,8 +206,19 @@ const EMPTY: Record<CaseStatus, { title: string; body: string }> = {
   },
 };
 
-function CaseList({ cases, filter }: { cases: CaseSummary[]; filter: CaseStatus }) {
-  const running = useRunningAnalyses();
+function CaseList({
+  cases,
+  filter,
+  none,
+}: {
+  cases: CaseSummary[];
+  filter: CaseStatus;
+  /** The shop has no cases at all yet. */
+  none: boolean;
+}) {
+  const shop = useShop();
+  const running = useRunningAnalyses(shop.id);
+  const fresh = none && filter === "needs_you";
   return (
     <div className="rounded-card border-line bg-paper overflow-hidden border">
       <AnimatePresence mode="popLayout" initial={false}>
@@ -218,14 +229,26 @@ function CaseList({ cases, filter }: { cases: CaseSummary[]; filter: CaseStatus 
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <EmptyState
-              icon={filter === "needs_you" ? <CircleCheck /> : <InboxIcon />}
-              title={EMPTY[filter].title}
-              description={EMPTY[filter].body}
-            />
+            {fresh ? (
+              <EmptyState
+                icon={<ShieldCheck />}
+                title="No disputes"
+                description={
+                  shop.kind === "real"
+                    ? "Truce checks PayPal for new disputes as they arrive, and again every night. When a buyer opens one, it lands here with Truce's read and a draft for you to approve."
+                    : "Every case in this sample shop is settled. Start the sample over to see them again."
+                }
+              />
+            ) : (
+              <EmptyState
+                icon={filter === "needs_you" ? <CircleCheck /> : <InboxIcon />}
+                title={EMPTY[filter].title}
+                description={EMPTY[filter].body}
+              />
+            )}
           </motion.div>
         ) : (
-          <motion.ul key={filter} className="divide-line-soft divide-y">
+          <motion.ul key={filter} className="divide-line divide-y">
             {cases.map((c, i) => (
               <motion.li
                 key={c.id}
@@ -253,9 +276,7 @@ function CaseList({ cases, filter }: { cases: CaseSummary[]; filter: CaseStatus 
   );
 }
 
-function activeLabel(
-  run: ReturnType<typeof useRunningAnalyses>[string] | undefined,
-): string | null {
+function activeLabel(run: AnalysisRun | undefined): string | null {
   if (!run || run.status !== "running") return null;
   return run.steps.find((s) => s.state === "active")?.label ?? "Starting";
 }
@@ -269,10 +290,12 @@ function CaseRow({
   analyzing: boolean;
   step: string | null;
 }) {
+  const shop = useShop();
+  const money = useMoney();
   const closed = kase.status === "closed";
   return (
     <Link
-      href={`/app/cases/${encodeURIComponent(kase.id)}`}
+      href={shopHref(shop.id, `cases/${encodeURIComponent(kase.id)}`)}
       className="group hover:bg-cream/70 grid grid-cols-[1fr_auto] items-start gap-x-4 gap-y-3 px-4 py-4 transition-colors focus-visible:-outline-offset-2 sm:px-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1.6fr)_auto] lg:items-center"
     >
       {/* Who and what */}
@@ -290,7 +313,7 @@ function CaseRow({
 
       {/* Amount and deadline (right on phones, last on desktop) */}
       <div className="flex flex-col items-end gap-1 text-right lg:order-last lg:min-w-[150px]">
-        <p className="text-ink text-[15px] font-semibold tabular-nums">{formatUsd(kase.amount)}</p>
+        <p className="text-ink text-[15px] font-semibold tabular-nums">{money(kase.amount)}</p>
         {closed ? (
           <ClosedNote kase={kase} />
         ) : (
@@ -301,8 +324,13 @@ function CaseRow({
         )}
       </div>
 
-      {/* Truce's read */}
-      <div className="col-span-2 min-w-0 lg:col-span-1">
+      {/* Truce's read; a case that closed without one keeps the column on desktop, empty */}
+      <div
+        className={cn(
+          "col-span-2 min-w-0 lg:col-span-1",
+          closed && !kase.recommendation && !analyzing && "max-lg:hidden",
+        )}
+      >
         <TruceRead kase={kase} analyzing={analyzing} step={step} />
       </div>
     </Link>
@@ -310,16 +338,15 @@ function CaseRow({
 }
 
 function ClosedNote({ kase }: { kase: CaseSummary }) {
+  const money = useMoney();
   return (
     <span className="flex items-center gap-2">
       {kase.outcome && <OutcomeChip outcome={kase.outcome} size="sm" />}
       {kase.feeCharged > 0 ? (
-        <span className="text-risk-700 text-[13px] tabular-nums">
-          {formatUsd(kase.feeCharged)} fee
-        </span>
+        <span className="text-risk-700 text-[13px] tabular-nums">{money(kase.feeCharged)} fee</span>
       ) : kase.moneyKept > 0 ? (
         <span className="text-moss-deep text-[13px] tabular-nums">
-          Kept {formatUsd(kase.moneyKept)}
+          Kept {money(kase.moneyKept)}
         </span>
       ) : null}
     </span>
@@ -345,12 +372,12 @@ function TruceRead({
     );
   }
   if (!kase.recommendation) {
+    // A case that ended without Truce says how it ended on the right; nothing to add here.
+    if (kase.status === "closed") return null;
     return (
       <p className="text-ink-3 flex items-center gap-2 text-[13px]">
         <Sparkles className="size-3.5" />
-        {kase.status === "closed"
-          ? "Closed before Truce looked at it"
-          : "Opens with a live analysis"}
+        Opens with a live analysis
       </p>
     );
   }
@@ -375,15 +402,14 @@ function TruceRead({
 function ListSkeleton() {
   return (
     <div
-      className="divide-line-soft rounded-card border-line bg-paper divide-y overflow-hidden border"
+      className="divide-line rounded-card border-line bg-paper divide-y overflow-hidden border"
       aria-busy="true"
+      aria-label="Loading the cases"
     >
       {[0, 1, 2, 3].map((i) => (
         <div
           key={i}
-          className={cn(
-            "grid grid-cols-[1fr_auto] gap-4 px-5 py-4 lg:grid-cols-[1.25fr_1.6fr_auto]",
-          )}
+          className="grid grid-cols-[1fr_auto] gap-4 px-5 py-4 lg:grid-cols-[1.25fr_1.6fr_auto]"
         >
           <div className="flex gap-3">
             <Skeleton className="size-8 rounded-full" />

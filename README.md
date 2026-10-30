@@ -10,35 +10,45 @@ evidence, works out what fighting, settling or refunding would cost, recommends 
 reply and checks every sentence of it against the evidence. It also checks orders before they ship.
 The seller approves every step; nothing reaches the buyer or PayPal without their tap.
 
-## Screenshots
+## Run it
 
-|                                                                                                                                                     |                                                                                                                      |
-| --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| ![The case file: Truce recommends a $10 offer, with the evidence behind each reason and what every move would cost](docs/screenshots/case-file.png) | ![The inbox: open disputes by deadline, with Truce's recommendation once a case is read](docs/screenshots/inbox.png) |
-| The case file, after the analysis                                                                                                                   | The inbox                                                                                                            |
-| ![Shop health: kept money, fees avoided, the claims ratio against the 1.5% line, disputes by reason and model spend](docs/screenshots/health.png)   | ![Wick & Ember, the demo shop, with PayPal sandbox checkout](docs/screenshots/shop.png)                              |
-| Shop health                                                                                                                                         | The demo shop                                                                                                        |
+From the `truce` folder, with Node 22.12 or later and `gcloud` signed in to the `truce-disputes`
+project (`gcloud auth login`, then `gcloud auth application-default login`, once):
 
-![The landing page](docs/screenshots/landing.png)
+```bash
+npm install
+npm run dev:live
+```
+
+Then open http://localhost:3100. [Run it locally](#run-it-locally) has the details and a setup with
+test accounts.
 
 ## Try it
 
-**Live demo: https://truce-zwezi7h4sa-uc.a.run.app**
+**Live: https://truce-zwezi7h4sa-uc.a.run.app**
 
-- **A private copy for each visitor.** The first visit makes you a copy of the Wick & Ember demo shop:
-  about 240 orders over 90 days, five open disputes that each call for a different move, twelve
-  closed ones and two orders waiting to ship. It lasts a week, and _Reset demo_ starts it over.
+- **Your own account.** Sign up with email and a password (Firebase Authentication, with email
+  verification and password reset). Onboarding sets up a shop step by step: its details, its PayPal
+  connection, the shipping and returns policies Truce quotes, and your notifications. Then a first
+  sync brings the disputes in, live, and analyzes the most urgent one. Only a ready shop reaches the
+  dashboard. One account can hold several shops; the switcher moves between them.
+- **Your own PayPal.** Paste your PayPal REST app's client ID and secret (sandbox or live). Truce checks
+  them with PayPal, reads which features the app has from its token, encrypts the secret, registers a
+  dispute webhook on the app, and from then on syncs your real disputes and sends what you approve
+  to PayPal. One-click connect (PayPal's partner onboarding) is coming.
+- **Or explore with a sample shop.** No PayPal app yet? The sample shop is Wick & Ember's data in a shop
+  of your own: about 240 orders over 90 days, five open disputes that each call for a different move,
+  twelve closed ones and two orders waiting to ship. Its PayPal calls and carrier scans are
+  simulated, and the app says so wherever they show. _Start over_ resets it; you can delete it.
 - **The models run for real.** Each analysis and every Ask Truce answer runs on NVIDIA Nemotron on
-  Nebius Token Factory. A case that another visitor already analyzed plays back from a recording in
-  about ten seconds; _Run again live_ runs it fresh.
-- **PayPal calls are simulated, and labelled.** Approving a step in a demo copy records the PayPal
-  call it would make ("Simulated in this demo copy"), then plays the buyer's reply a few seconds
-  later, or PayPal's ruling a couple of minutes later, so each story finishes. Carrier tracking scans are simulated too.
-- **The live sandbox.** The owner's workspace is connected to the PayPal sandbox for real: disputes
-  sync from PayPal, and approvals call PayPal's Disputes API.
-- **The demo shop** at `/shop` takes real sandbox payments with PayPal's checkout buttons. Pay with a
-  PayPal sandbox account or a test card from the PayPal developer dashboard; no real money moves.
-  The order shows up in your demo copy, where you can try the before-shipping check on it.
+  Nebius Token Factory. In the sample shop, a case analyzed before plays back from a recording in
+  about ten seconds; _Run again live_ runs it fresh. Real shops always run live.
+- **What isn't real yet, and says so:** carrier scans (no carrier API: real shops use the tracking
+  number and status on their PayPal orders), email notifications (your choices are saved; in-app
+  notifications work now), one-click PayPal connect, and billing (free during the beta).
+- **The demo storefront** at `/shop` takes real sandbox payments with PayPal's checkout buttons. Pay with
+  a PayPal sandbox account or a test card from the PayPal developer dashboard; no real money moves.
+  Orders land in every shop connected to the storefront's own sandbox app.
 
 Five disputes to open, each with a different right answer:
 
@@ -168,11 +178,13 @@ on some models and as `prompt_tokens_details.cached_tokens` on others; Truce rea
 
 ### Replays, limits and timeouts
 
-- **Replays.** The first clean live run of each demo case is recorded event by event. Later visitors
-  get the same run in about ten seconds, with every date moved to their copy's calendar.
-- **Limits.** 20 live analyses and 60 chat questions per demo copy per day, and a daily spend cap
-  across everyone (`TRUCE_DAILY_SPEND_CAP`, $5 unless set). Past the cap, recordings still play and
-  the app says why.
+- **Replays, sample shops only.** The first clean live run of each sample case is recorded event by
+  event. Later sample shops get the same run in about ten seconds, with every date moved to their
+  calendar. A real shop's cases always run live.
+- **Limits.** Per shop per day: 100 live analyses and 200 chat questions in a real shop, 20 and 60 in
+  a sample shop. A daily spend cap across every shop (`TRUCE_DAILY_SPEND_CAP`, $5 unless set); past
+  it, the app says why. Sign-ins, PayPal connections, approvals, syncs and edits have their own rate
+  limits per network, account or shop.
 - **Queueing.** At most four live analyses run at once on a server; more wait their turn. Token
   Factory's rate-limit headers allow 600 requests and 400,000 tokens a minute.
 - **Timeouts.** Every step has its own deadline, and each request a shorter one, so a stalled request
@@ -197,13 +209,18 @@ The chat ([`src/server/ai/chat`](src/server/ai/chat)) runs on Super VL with eigh
 week?" and "Why did we lose the mug dispute?". Asked to act ("Refund Sam and say sorry"), it prepares
 an action card that the seller approves in the app; it never sends anything itself.
 
+Ask Truce is each shop's home page. Every chat is saved for the person who asked, in that shop
+only ([`src/server/chats.ts`](src/server/chats.ts)): the question as soon as it's asked, and the
+answer with its lookups and cards once it finishes or is stopped. Recent chats are listed under the
+input, and the open chat sits in the address (`?chat=<id>`), so it survives a reload.
+
 ### The overnight check
 
-[`sweep.ts`](src/server/ai/sweep.ts) syncs new disputes from PayPal (live workspace) and sorts every
+[`sweep.ts`](src/server/ai/sweep.ts) syncs a connected shop's new disputes from PayPal and sorts every
 unread case with Lightning. It also checks each order waiting to ship against Seller Protection, for
 example an order whose label goes to an office address PayPal doesn't know. _Run overnight check_ in
-the inbox streams it; `POST /api/jobs/overnight` runs it for a scheduler and also prepares the full
-analysis of each new case.
+the inbox streams it; `POST /api/jobs/overnight` runs it for a scheduler on every connected shop, and
+also prepares the full analysis of each new case.
 
 ## PayPal integration
 
@@ -227,9 +244,19 @@ credentials kept on the server.
   | Settle       | Inquiry                      | `make-offer`, a `REFUND` offer for the amount                                                                                                                           |
   | Refund       | Any                          | `accept-claim`, a `REFUND`                                                                                                                                              |
 
-- **Sync and webhooks.** Disputes sync into the live workspace by listing them and fetching the ones
-  that changed (at most once a minute while someone's looking). `CUSTOMER.DISPUTE.*` webhooks are
-  accepted only after PayPal's `verify-webhook-signature` confirms them.
+- **Connecting a shop.** `POST /v1/oauth2/token` with the seller's keys proves they work; the token's
+  scopes say what the app can do (disputes `read-seller` and `update-seller` are required;
+  `reporting/search/read` brings the order history; `shipping/trackers/readwrite` adds tracking). The
+  secret is sealed with AES-256-GCM (a fresh data key per secret, wrapped by a master key from Secret
+  Manager, bound to the shop) and never returned or logged.
+- **Sync and webhooks.** Each shop's disputes sync by listing them and fetching the ones that changed
+  (at most once a minute while someone's looking, on every webhook, and every night). A payment Truce
+  hasn't seen is filled in from PayPal: `GET /v2/payments/captures/{id}` (amount, Seller Protection,
+  the order), `GET /v2/checkout/orders/{id}` (items, the address on the payment, trackers) and
+  `GET /v1/shipping/trackers/{id}` (carrier and tracking number). With Transaction Search, the last
+  90 days of sales come in too, so the claims ratio is known. Each shop's `CUSTOMER.DISPUTE.*`
+  webhook (registered on its app at `/api/paypal/webhook/[shopId]`) is accepted only after PayPal's
+  `verify-webhook-signature` confirms it with that shop's app.
 - **Sandbox notes, from testing.**
   - Sandbox disputes are opened by hand from a sandbox buyer account. They reach the API about seven
     minutes later, already as claims.
@@ -239,23 +266,26 @@ credentials kept on the server.
 
 ## Tavily
 
-The gather step reads the listing and the shop's policies as the buyer saw them, with Tavily's
-extract API on `SITE_URL/shop/products/<slug>` and `SITE_URL/shop/policies`. The stated details are
-checked against the page, and the record cites the page. When the site isn't public (local
-development) or the page can't be read within seven seconds, the record uses the catalog's copy and
-says so in its source.
+The gather step reads the listing and the shop's policies as the buyer saw them. For a real shop,
+Tavily searches the shop's own website for each ordered item and extracts the page; the record is
+written by code from the page's text and cites its address, and a page on another site never counts.
+Policies come from what the seller gave Truce: pasted text, or a public page Tavily reads. The sample
+shop reads the demo storefront (`SITE_URL/shop/products/<slug>` and `SITE_URL/shop/policies`), and
+falls back to the catalog's copy, saying so, when the site isn't public.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  Browser["Browser: landing, app, shop"] -->|"fetch and server-sent events"| Routes["Next.js route handlers"]
+  Browser["Browser: landing, sign-in, onboarding, app, storefront"] -->|"fetch and server-sent events"| Routes["Next.js route handlers"]
+  Browser -->|"sign-in"| Firebase["Firebase Authentication"]
+  Routes -->|"session cookies"| Firebase
   Routes --> Agent["src/server/ai: analysis, chat, overnight check"]
   Routes --> Actions["src/server/actions: approvals, tracking, checkout"]
   Agent -->|"OpenAI-compatible API"| TF["Nebius Token Factory: Nemotron Lightning, Super VL, Ultra; Qwen3 embeddings"]
   Agent --> Tavily["Tavily extract"]
   Agent --> Rules["src/lib/rules: fees, deadlines, ratio, protection, costs"]
-  Actions --> PayPal["PayPal REST: Orders v2, tracking, Disputes v1"]
+  Actions --> PayPal["Each shop's PayPal app: Disputes v1, Orders and Payments v2, trackers, Transaction Search, webhooks"]
   PayPal -->|"webhooks"| Routes
   Agent --> Store[("Firestore, or memory")]
   Actions --> Store
@@ -263,8 +293,9 @@ flowchart LR
 
 ```
 src/
-  app/              pages (landing, /app, /shop, /owner) and the API routes under app/api
-  components/       the interface: app, landing, shop and shared UI
+  proxy.ts          sends signed-out visitors of /app and /onboarding to sign-in
+  app/              pages (landing, sign-in, onboarding, /app/[shopId], /shop) and app/api
+  components/       the interface: app, onboarding, sign-in, shop setup, landing, storefront, UI
   lib/
     rules/          fees, deadlines, claims ratio, Seller Protection, option costs
     client/         browser fetchers and stream readers
@@ -272,15 +303,19 @@ src/
     catalog.ts      the Wick & Ember products and policies
   server/
     ai/             the agent: pipeline/, chat/, sweep.ts, prompts, models, the tool loop
-    actions/        approvals, scripted demo replies, tracking, checkout, the evidence PDF
-    paypal/         the REST client, dispute sync, webhooks
+    auth/           sessions, the request guard (origin, membership), page checks
+    setup/          shops' lives and the streamed first sync
+    actions/        approvals, sample-shop replies, tracking, storefront checkout, the evidence PDF
+    paypal/         the REST client, connecting a shop, dispute and order sync, webhooks
+    crypto/         secrets sealed with AES-256-GCM
     store/          Firestore and in-memory stores behind one interface
-    demo/           the deterministic demo seed
-    session.ts      demo copies and the owner's sign-in
+    demo/           the sample shop's deterministic seed
+    shops.ts        roles, setup steps and shop IDs
+    notifications.ts  in-app notifications
     limits.ts       rate limits and the daily spend
+    log.ts          JSON logs, with credentials redacted
 scripts/            dev-live.mjs, deploy-cloud-run.sh
 brand/              logo, icons and colour tokens
-docs/screenshots/   the images above
 ```
 
 ## Rules in code, not the model
@@ -314,15 +349,17 @@ You need Node 22.12 or later.
 
 ```bash
 npm install
-cp .env.example .env.local      # fill in the keys you have; every service is optional
-TRUCE_STORE=memory npm run dev  # http://localhost:3000
+npm run dev:live                       # http://localhost:3100, real Firebase sign-in
 ```
 
-- **Without `NEBIUS_API_KEY`**, recorded analyses still replay, but live ones and Ask Truce say Token
-  Factory isn't connected.
-- **Without PayPal keys**, the demo shop can't check out; demo copies work as usual.
-- **`npm run dev:live`** reads the keys from Google Secret Manager into the dev server's environment
-  only (it needs `gcloud` signed in to the project) and serves on port 3100.
+- **`npm run dev:live`** reads the keys from Google Secret Manager and the Firebase web config from the
+  Firebase Management API into the dev server's environment only (it needs `gcloud` signed in to the
+  project), and serves on port 3100.
+- **Test accounts without touching real ones:** run the Firebase Auth emulator
+  (`firebase emulators:start --only auth --project demo-truce`, from a folder outside the repo) and
+  `TRUCE_STORE=memory TRUCE_GCP_PROJECT=demo-truce npm run dev:live -- --emulator`.
+- **Without `NEBIUS_API_KEY`**, sample analyses still replay, but live ones and Ask Truce say Token
+  Factory isn't connected. **Without `TRUCE_ENCRYPTION_KEY`**, shops can't connect PayPal.
 
 Checks:
 
@@ -353,13 +390,15 @@ as a non-root user. Secrets never enter the image.
 [`scripts/deploy-cloud-run.sh`](scripts/deploy-cloud-run.sh) deploys it to Google Cloud Run:
 
 1. It builds the image with Cloud Build.
-2. It creates a runtime service account that can use Firestore and read Secret Manager.
-3. It deploys the service, with each key mounted from Secret Manager as an environment variable and
-   `SITE_URL` set to the service's address.
+2. It gives the runtime service account Firestore, Secret Manager and Firebase Authentication admin
+   (session cookies, signing out everywhere, checking verification).
+3. It deploys the service, with each key mounted from Secret Manager (including the encryption key),
+   the Firebase web config looked up from the project, and `SITE_URL` set to the service's address.
 
-Data lives in Firestore. Cached values (recordings, embeddings) carry an `expiresAt` for a TTL
-policy. A scheduler can call `POST /api/jobs/overnight` with the `x-truce-job-key` header for the
-overnight check.
+Data lives in Firestore, closed to every client by [`firestore.rules`](firestore.rules) (deploy them
+with `firebase deploy --only firestore:rules`). Cached values (recordings, embeddings) carry an
+`expiresAt` for a TTL policy. A scheduler can call `POST /api/jobs/overnight` with the
+`x-truce-job-key` header for the overnight check on every connected shop.
 
 ## Licence
 

@@ -16,13 +16,11 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import type { Case, CaseEvent, Order } from "@/lib/domain";
-import { formatDateTime } from "@/lib/client/format";
+import type { Case, CaseEvent, Order, Shop } from "@/lib/domain";
 import { REASON, STAGE, tidyPlace, TRACKING_STATUS } from "@/lib/client/labels";
-import { useNow } from "@/lib/client/now";
-import { formatUsd } from "@/lib/money";
+import { useShopDates } from "@/lib/client/shop-context";
+import { formatMoney } from "@/lib/money";
 import { duration, ease } from "../../motion";
-import { Chip } from "../../ui/chip";
 import { cn } from "../../ui/cn";
 
 type Tone = "neutral" | "good" | "warn" | "buyer" | "truce" | "seller";
@@ -35,14 +33,31 @@ interface Item {
   title: string;
   detail?: string;
   quote?: boolean;
-  simulated?: boolean;
+  /** Show only the day: PayPal records some things, such as shipping, by date alone. */
+  dayOnly?: boolean;
+}
+
+/** A day PayPal gives as "2026-10-27" means that calendar day: noon UTC keeps it in every zone. */
+function dayInstant(day: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${day}T12:00:00.000Z` : day;
+}
+
+/** The later of two instants, so a shipment dated by day never lands before its own payment. */
+function later(a: string, b: string): string {
+  return Date.parse(a) >= Date.parse(b) ? a : b;
 }
 
 /**
- * The story of the order, from checkout to today: the payment, every carrier scan, the dispute,
- * the messages, and each step taken since.
+ * The story of the order, from checkout to today: the payment, the shipment, the dispute, the
+ * messages, and each step taken since. A sample shop has carrier scans; a real shop has the
+ * tracking on its PayPal order, since carrier scans aren't connected yet.
  */
-export function buildTimeline(kase: Case, order: Order | null, events: CaseEvent[]): Item[] {
+export function buildTimeline(
+  kase: Case,
+  order: Order | null,
+  events: CaseEvent[],
+  shop: Pick<Shop, "currency">,
+): Item[] {
   const items: Item[] = [];
   if (order) {
     items.push({
@@ -51,7 +66,7 @@ export function buildTimeline(kase: Case, order: Order | null, events: CaseEvent
       icon: <Package />,
       tone: "neutral",
       title: `Order ${order.id} placed`,
-      detail: `${order.items.map((i) => `${i.quantity} × ${i.name}`).join(", ")} · ${formatUsd(order.amount)}`,
+      detail: `${order.items.map((i) => `${i.quantity} × ${i.name}`).join(", ")} · ${formatMoney(order.amount, shop.currency)}`,
     });
     items.push({
       id: "payment",
@@ -59,25 +74,35 @@ export function buildTimeline(kase: Case, order: Order | null, events: CaseEvent
       icon: <CreditCard />,
       tone: order.protection === "ELIGIBLE" ? "good" : "neutral",
       title: "Paid with PayPal",
-      detail: [
-        order.protection
-          ? `Seller Protection: ${order.protection.toLowerCase().replace(/_/g, " ")}`
-          : null,
-        order.captureId ? `capture ${order.captureId}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · "),
+      detail: order.protection
+        ? `Seller Protection: ${order.protection.toLowerCase().replace(/_/g, " ")}`
+        : undefined,
     });
-    const scans = order.tracking?.events ?? [];
-    if (order.tracking && scans.length === 0) {
+    const tracking = order.tracking;
+    const scans = tracking?.events ?? [];
+    if (tracking && scans.length === 0) {
+      const paid = new Date(new Date(order.placedAt).getTime() + 2 * 60_000).toISOString();
       items.push({
         id: "label",
-        at: order.placedAt,
+        at: tracking.shippedAt ? later(dayInstant(tracking.shippedAt), paid) : paid,
+        dayOnly: Boolean(tracking.shippedAt),
         icon: <Truck />,
         tone: "neutral",
-        title: `${order.tracking.carrier} label created`,
-        detail: order.tracking.number,
+        title: tracking.shippedAt
+          ? `Shipped with ${tracking.carrier}`
+          : `${tracking.carrier} tracking added`,
+        detail: tracking.number,
       });
+      if (tracking.deliveredAt) {
+        items.push({
+          id: "delivered",
+          at: tracking.deliveredAt,
+          icon: <PackageCheck />,
+          tone: "good",
+          title: tracking.signedFor ? "Delivered and signed for" : "Delivered",
+          detail: `${tracking.carrier} ${tracking.number}`,
+        });
+      }
     }
     scans.forEach((scan, i) => {
       items.push({
@@ -143,13 +168,18 @@ export function buildTimeline(kase: Case, order: Order | null, events: CaseEvent
                 ? "good"
                 : "neutral",
       title: e.title,
-      detail: e.detail,
+      detail: e.detail && withoutApiPath(e.detail),
       quote: e.kind === "message" || e.kind === "buyer_reply",
-      simulated: e.simulated,
     });
   }
 
   return items.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+/** "Simulated in this sample shop: POST /v1/…" reads as just the first part; a bare path, as nothing. */
+function withoutApiPath(detail: string): string | undefined {
+  const cut = detail.replace(/:?\s*(GET|POST|PUT|PATCH|DELETE) \/v\d+\/\S*$/, "").trim();
+  return cut || undefined;
 }
 
 const EVENT_ICON: Partial<Record<CaseEvent["kind"], ReactNode>> = {
@@ -173,13 +203,13 @@ const DOT: Record<Tone, string> = {
   warn: "bg-warn-50 text-warn-700 ring-warn-200",
   buyer: "bg-paper text-ink-2 ring-line-strong",
   truce: "bg-ink text-lemon ring-ink",
-  seller: "bg-mist text-moss-deep ring-[#e3eab8]",
+  seller: "bg-mist text-moss-deep ring-mist-line",
 };
 
 const COLLAPSE_AT = 9;
 
 export function Timeline({ items }: { items: Item[] }) {
-  const now = useNow();
+  const dates = useShopDates();
   const [expanded, setExpanded] = useState(false);
   const hidden = !expanded && items.length > COLLAPSE_AT ? items.length - 6 : 0;
   const head = hidden ? items.slice(0, 2) : items;
@@ -204,25 +234,21 @@ export function Timeline({ items }: { items: Item[] }) {
         {item.icon}
       </span>
       <div className="min-w-0 flex-1 pt-[3px]">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-          <p className="text-ink text-[13.5px] leading-snug font-medium">{item.title}</p>
-          <time dateTime={item.at} className="text-ink-3 text-xs tabular-nums">
-            {formatDateTime(item.at, now)}
+        {/* A long title wraps beside its time, so every time sits on the right. */}
+        <div className="flex items-baseline justify-between gap-x-3">
+          <p className="text-ink min-w-0 text-[14px] leading-snug font-medium">{item.title}</p>
+          <time dateTime={item.at} className="text-ink-3 shrink-0 text-[13px] tabular-nums">
+            {item.dayOnly ? dates.date(item.at) : dates.dateTime(item.at)}
           </time>
         </div>
         {item.detail &&
           (item.quote ? (
-            <p className="bg-cream text-ink mt-1.5 rounded-[10px] rounded-tl-[3px] px-3 py-2 text-[13px] leading-relaxed">
+            <p className="bg-cream text-ink mt-1.5 rounded-[10px] rounded-tl-[3px] px-3 py-2 text-[13.5px] leading-relaxed whitespace-pre-line">
               {item.detail}
             </p>
           ) : (
-            <p className="text-ink-2 mt-0.5 text-[13px] leading-relaxed">{item.detail}</p>
+            <p className="text-ink-2 mt-0.5 text-[13.5px] leading-relaxed">{item.detail}</p>
           ))}
-        {item.simulated && (
-          <Chip tone="outline" size="sm" className="mt-1.5">
-            Simulated in this demo copy
-          </Chip>
-        )}
       </div>
     </motion.li>
   );

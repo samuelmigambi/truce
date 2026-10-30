@@ -1,14 +1,22 @@
 import "server-only";
 
 import type { AnalysisEvent } from "@/lib/api-types";
-import type { Analysis, Case, CaseEvent, Order, OrderFacts } from "@/lib/domain";
-import { formatUsd } from "@/lib/money";
+import type {
+  Analysis,
+  Case,
+  CaseEvent,
+  CurrencyCode,
+  Move,
+  Order,
+  OrderFacts,
+} from "@/lib/domain";
+import { formatMoney } from "@/lib/money";
 import { caseProtection, type ProtectionResult } from "@/lib/rules/protection";
 import { shopRatio } from "@/server/metrics";
 import { dailySpendCap, gate } from "../budget";
 import { EventLog, Slots } from "../events";
-import { shortModelName } from "../models";
 import { PROMPT_VERSION } from "../prompts";
+import { salesKnown } from "../shop";
 import { decideStep, weighStep } from "./decide";
 import { draftStep } from "./draft";
 import { publicRecords } from "./evidence";
@@ -32,10 +40,11 @@ export { triageCase, caseUrgency } from "./triage";
 
 /**
  * The case analysis: triage, gather, protect, weigh, decide, draft, verify and similar, streamed as
- * AnalysisEvents. A demo case that was analyzed before is replayed from its recording; anything
- * else runs live on Token Factory within the day's limits. A live run doesn't depend on its
- * reader: it finishes and saves even if the browser goes away, and a second request for the same
- * case follows the run already going.
+ * AnalysisEvents, in the shop's own words, calendar and currency. A sample shop's seeded case that
+ * was analyzed before is replayed from its recording; anything else (every real shop's case) runs
+ * live on Token Factory within the day's limits. A live run doesn't depend on its reader: it
+ * finishes and saves even if the browser goes away, and a second request for the same case
+ * follows the run already going.
  */
 
 const running = new Map<string, EventLog<AnalysisEvent>>();
@@ -52,14 +61,14 @@ interface Loaded {
 }
 
 export async function* analyzeCase(deps: AnalyzeDeps): AsyncGenerator<AnalysisEvent> {
-  const { store, workspace } = deps;
-  const kase = await store.getCase(workspace.id, deps.caseId);
+  const { store, shop } = deps;
+  const kase = await store.getCase(shop.id, deps.caseId);
   if (!kase) {
-    yield { type: "error", message: "That case isn't in this workspace." };
+    yield { type: "error", message: "That case isn't in this shop." };
     return;
   }
   // One run per case at a time: a second request (a refresh, a second tab) follows it.
-  const key = `${workspace.id}:${kase.id}`;
+  const key = `${shop.id}:${kase.id}`;
   let log = running.get(key);
   if (!log) {
     const own = new EventLog<AnalysisEvent>();
@@ -84,11 +93,11 @@ export async function* analyzeCase(deps: AnalyzeDeps): AsyncGenerator<AnalysisEv
 /** Decides between a replay and a live run, and writes whichever it is to the run's log. */
 async function produce(deps: AnalyzeDeps, kase: Case, log: EventLog<AnalysisEvent>): Promise<void> {
   const now = deps.now?.() ?? new Date();
-  const { store, workspace } = deps;
+  const { store, shop } = deps;
   const [order, cases, orders] = await Promise.all([
-    store.getOrder(workspace.id, kase.orderId),
-    store.listCases(workspace.id),
-    store.listOrders(workspace.id),
+    store.getOrder(shop.id, kase.orderId),
+    store.listCases(shop.id),
+    store.listOrders(shop.id),
   ]);
   const closed = cases.filter((c) => c.status === "closed" && c.id !== kase.id);
   const loaded: Loaded = { kase, order, closed, cases, orders, now };
@@ -96,7 +105,7 @@ async function produce(deps: AnalyzeDeps, kase: Case, log: EventLog<AnalysisEven
   const recording = await findRecording(deps, loaded);
   if (recording?.fits && !deps.live) return play(deps, recording.rec, loaded, log);
 
-  const allowed = await gate(deps.budget, "analyze", workspace, deps.spendCap ?? dailySpendCap());
+  const allowed = await gate(deps.budget, "analyze", shop, deps.spendCap ?? dailySpendCap());
   if (!allowed.ok) {
     // Over a limit: a recording of the same facts is still better than nothing, if a little older.
     if (recording && !deps.live) return play(deps, recording.rec, loaded, log);
@@ -106,7 +115,7 @@ async function produce(deps: AnalyzeDeps, kase: Case, log: EventLog<AnalysisEven
   if (!deps.client) {
     log.push({
       type: "error",
-      message: "Token Factory isn't connected here, so Truce can't analyze this case live.",
+      message: "Truce can't analyze this case right now. Try again in a little while.",
     });
     return;
   }
@@ -143,19 +152,25 @@ async function produce(deps: AnalyzeDeps, kase: Case, log: EventLog<AnalysisEven
 export const LIVE_AT_ONCE = 4;
 const LIVE_RUNS = new Slots(LIVE_AT_ONCE);
 
+/** Where a run of this case is recorded, if it can be: sample shops' seeded cases only. */
+function recordingKey(deps: AnalyzeDeps): string | null {
+  const { shop } = deps;
+  if (shop.kind !== "sample" || !shop.seedVersion || !deps.seedCaseId) return null;
+  return replayKey(shop.seedVersion, deps.seedCaseId, shop);
+}
+
 async function findRecording(
   deps: AnalyzeDeps,
   loaded: Loaded,
 ): Promise<{ rec: Recording; fits: boolean } | null> {
-  const { workspace } = deps;
-  if (workspace.kind !== "demo" || !workspace.seedVersion || !deps.seedCaseId) return null;
-  const rec = await deps.store
-    .getCached<Recording>(replayKey(workspace.seedVersion, deps.seedCaseId))
-    .catch(() => null);
-  if (!rec?.timeline || !sameFacts(rec, loaded.kase, loaded.order, loaded.closed)) return null;
+  const key = recordingKey(deps);
+  if (!key) return null;
+  const rec = await deps.store.getCached<Recording>(key).catch(() => null);
+  if (!rec?.timeline || !sameFacts(rec, loaded.kase, loaded.order, loaded.closed, deps.shop))
+    return null;
   return {
     rec,
-    fits: recordingFits(rec, workspace, loaded.kase, loaded.order, loaded.closed, loaded.now),
+    fits: recordingFits(rec, deps.shop, loaded.kase, loaded.order, loaded.closed, loaded.now),
   };
 }
 
@@ -166,7 +181,7 @@ async function play(
   log: EventLog<AnalysisEvent>,
 ): Promise<void> {
   const player = replay(rec, {
-    workspace: deps.workspace,
+    shop: deps.shop,
     kase: loaded.kase,
     order: loaded.order,
     closed: loaded.closed,
@@ -224,7 +239,7 @@ function similarStep(run: Run, gathered: Gathered): void {
       type: "step",
       step: "similar",
       state: "error",
-      label: `${shortModelName(model)} didn't answer, so similar cases are missing`,
+      label: "Couldn't look up similar cases",
       model,
     });
     return;
@@ -238,28 +253,32 @@ function similarStep(run: Run, gathered: Gathered): void {
   run.emit({ type: "step", step: "similar", state: "done", label, model });
 }
 
-const RECOMMENDS: Record<Analysis["recommendation"]["move"], (a: Analysis) => string> = {
+const RECOMMENDS: Record<Move, (a: Analysis, currency: CurrencyCode) => string> = {
   fight: () => "Truce recommends fighting",
-  settle: (a) => `Truce recommends settling for ${formatUsd(a.recommendation.offerAmount ?? 0)}`,
+  settle: (a, currency) =>
+    `Truce recommends settling for ${formatMoney(a.recommendation.offerAmount ?? 0, currency)}`,
   refund: () => "Truce recommends a refund",
 };
 
-/** Saves the analysis, and notes the first one on the case's timeline. */
+/**
+ * Saves the analysis, and notes it on the case's timeline: the first one, and any later run that
+ * changes the call, so the timeline never shows a move Truce no longer recommends as its last.
+ */
 async function save(deps: AnalyzeDeps, kase: Case, analysis: Analysis): Promise<void> {
-  const { store, workspace } = deps;
-  const previous = await store.getAnalysis(workspace.id, kase.id).catch(() => null);
-  await store.saveAnalysis(workspace.id, analysis);
-  if (previous) return;
+  const { store, shop } = deps;
+  const previous = await store.getAnalysis(shop.id, kase.id).catch(() => null);
+  await store.saveAnalysis(shop.id, analysis);
+  if (previous?.recommendation.move === analysis.recommendation.move) return;
   const event: CaseEvent = {
     id: `analysis-${Date.parse(analysis.createdAt).toString(36)}`,
     at: analysis.createdAt,
     kind: "analysis",
     actor: "truce",
-    title: RECOMMENDS[analysis.recommendation.move](analysis),
+    title: RECOMMENDS[analysis.recommendation.move](analysis, shop.currency),
     detail: analysis.recommendation.headline,
   };
   await store
-    .addEvent(workspace.id, kase.id, event)
+    .addEvent(shop.id, kase.id, event)
     .catch((error) => console.error("[analysis] couldn't note it", error));
 }
 
@@ -291,7 +310,7 @@ async function runLive(
     kase: loaded.kase,
     order: loaded.order,
     closed: loaded.closed,
-    ratio: shopRatio(loaded.orders, loaded.cases, loaded.now.getTime()),
+    ratio: shopRatio(loaded.orders, loaded.cases, loaded.now.getTime(), salesKnown(deps.shop)),
     now: loaded.now,
     emit,
     meter: new Meter(emit, deps.budget),
@@ -331,20 +350,14 @@ async function runLive(
     await save(deps, loaded.kase, analysis);
     emit({ type: "result", analysis, replayed: false });
 
-    // A clean run of an untouched demo case becomes the recording later visitors watch.
-    const { workspace } = deps;
+    // A clean run of an untouched sample case becomes the recording later visitors watch.
+    const key = recordingKey(deps);
     const replaceable =
       !previous ||
-      !recordingFits(previous, workspace, loaded.kase, loaded.order, loaded.closed, loaded.now);
-    if (
-      run.problems.length === 0 &&
-      workspace.kind === "demo" &&
-      workspace.seedVersion &&
-      deps.seedCaseId &&
-      replaceable
-    ) {
+      !recordingFits(previous, deps.shop, loaded.kase, loaded.order, loaded.closed, loaded.now);
+    if (key && run.problems.length === 0 && replaceable) {
       const recording = makeRecording({
-        workspace,
+        shop: deps.shop,
         kase: loaded.kase,
         order: loaded.order,
         closed: loaded.closed,
@@ -356,7 +369,7 @@ async function runLive(
         analysis,
       });
       await deps.store
-        .setCached(replayKey(workspace.seedVersion, deps.seedCaseId), recording, RECORDING_SECONDS)
+        .setCached(key, recording, RECORDING_SECONDS)
         .catch((error) => console.error("[analysis] couldn't record the run", error));
     }
   } catch (error) {

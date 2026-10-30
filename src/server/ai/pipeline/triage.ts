@@ -2,13 +2,14 @@ import "server-only";
 
 import { z } from "zod";
 import type { Case, Order } from "@/lib/domain";
-import { formatUsd } from "@/lib/money";
+import { formatMoney } from "@/lib/money";
 import { urgency as urgencyFromDue, type Urgency } from "@/lib/rules/deadlines";
 import type { ChatClient } from "../client";
 import { formatDay, formatShortDay } from "../dates";
 import type { Usage } from "../models";
 import { caseBlock, orderLine, REASON_LABEL, triageSystem } from "../prompts";
 import { looksLikeInjection } from "../safety";
+import type { ShopLocale } from "../shop";
 import { askForJson } from "../structured";
 import { failureReason, metered, stepFailed, TIMEOUTS } from "./run";
 import type { Run } from "./types";
@@ -50,16 +51,20 @@ const INJECTION_NOTE =
   " The buyer's message also contains instructions aimed at software; Truce treats them as part of the claim and nothing more.";
 
 /** A plain summary from the case data, for when the model can't be reached. */
-export function fallbackSummary(kase: Case, order: Order | null): string {
+export function fallbackSummary(kase: Case, order: Order | null, shop: ShopLocale): string {
+  const day = (iso: string) => formatDay(iso, shop.timeZone);
   const reason = REASON_LABEL[kase.reason];
-  const tracking = order?.tracking
-    ? order.tracking.deliveredAt
-      ? ` ${order.tracking.carrier} shows it delivered ${formatDay(order.tracking.deliveredAt)}.`
-      : ` ${order.tracking.carrier} shows no delivery yet.`
+  const t = order?.tracking;
+  const tracking = t
+    ? t.deliveredAt
+      ? ` ${t.carrier} shows it delivered ${day(t.deliveredAt)}.`
+      : t.events?.length
+        ? ` ${t.carrier} shows no delivery yet.`
+        : ` It has ${t.carrier} tracking, but Truce has no carrier scans for it.`
     : "";
-  const due = kase.dueAt ? ` The response is due ${formatDay(kase.dueAt)}.` : "";
+  const due = kase.dueAt ? ` The response is due ${day(kase.dueAt)}.` : "";
   const article = kase.stage === "inquiry" ? "an" : "a";
-  return `${kase.buyer.name} opened ${article} ${kase.stage} for ${reason} on ${kase.itemSummary} (${formatUsd(kase.amount)}) on ${formatDay(kase.openedAt)}.${tracking}${due}`;
+  return `${kase.buyer.name} opened ${article} ${kase.stage} for ${reason} on ${kase.itemSummary} (${formatMoney(kase.amount, shop.currency)}) on ${day(kase.openedAt)}.${tracking}${due}`;
 }
 
 /** Lightning's read of a case. Used by the analysis and by the overnight check. */
@@ -69,13 +74,16 @@ export async function triageCase(
   kase: Case,
   order: Order | null,
   now: Date,
+  shop: ShopLocale,
   signal?: AbortSignal,
 ): Promise<{ value: Triage; usage: Usage }> {
   const answer = await askForJson({
     client,
     model,
-    system: triageSystem(now),
-    messages: [{ role: "user", content: `${caseBlock(kase, now)}\n\n${orderLine(order)}` }],
+    system: triageSystem(now, shop.timeZone),
+    messages: [
+      { role: "user", content: `${caseBlock(kase, now, shop)}\n\n${orderLine(order, shop)}` },
+    ],
     name: "record_triage",
     description: "Record the triage of this dispute.",
     schema: TriageAnswer,
@@ -92,12 +100,13 @@ export async function triageCase(
 
 export async function triageStep(run: Run): Promise<Triage> {
   const model = run.deps.models.fast;
+  const { shop } = run.deps;
   run.emit({ type: "step", step: "triage", state: "start", label: "Reading the case", model });
-  // An absolute date, so a replay in another demo copy can move it to that copy's calendar.
-  const due = run.kase.dueAt ? formatShortDay(run.kase.dueAt) : null;
+  // An absolute date, so a replay in another sample shop can move it to that shop's calendar.
+  const due = run.kase.dueAt ? formatShortDay(run.kase.dueAt, shop.timeZone) : null;
   try {
     const triage = await metered(run, "triage", model, TIMEOUTS.triage.deadline, (signal) =>
-      triageCase(run.client, model, run.kase, run.order, run.now, signal),
+      triageCase(run.client, model, run.kase, run.order, run.now, shop, signal),
     );
     run.emit({
       type: "step",
@@ -116,7 +125,7 @@ export async function triageStep(run: Run): Promise<Triage> {
       error,
       `Lightning ${failureReason(error)}, so this is a plain summary of the case data`,
       {
-        summary: fallbackSummary(run.kase, run.order) + (injection ? INJECTION_NOTE : ""),
+        summary: fallbackSummary(run.kase, run.order, shop) + (injection ? INJECTION_NOTE : ""),
         urgency: caseUrgency(run.kase, run.now),
         injection,
       },

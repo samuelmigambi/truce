@@ -5,6 +5,8 @@ import { dueLabel, urgency } from "@/lib/rules/deadlines";
 import { caseProtection, shippingChecks } from "@/lib/rules/protection";
 import { shopRatio } from "@/server/metrics";
 import { MemoryStore } from "@/server/store/memory";
+import { testUser } from "@/server/testing/shops";
+import { sampleShop } from "./sample";
 import { checkDigit } from "./usps";
 import {
   buildSeed,
@@ -14,7 +16,7 @@ import {
   SEED_VERSION,
   seedAnchor,
   seedCaseId,
-  seedDemo,
+  seedSample,
   seedVersionFor,
 } from "./seed";
 
@@ -237,27 +239,26 @@ describe("the demo seed", () => {
   });
 });
 
-describe("seedDemo", () => {
-  it("writes the seed into a workspace and marks its version", async () => {
+describe("seedSample", () => {
+  it("writes the seed into a sample shop and marks its version and day", async () => {
     const store = new MemoryStore(() => now);
-    const workspace = await seedDemo(store, {
-      id: "demo-test-workspace-0001",
-      kind: "demo",
-      shopName: "Wick & Ember",
-      createdAt: created,
-      expiresAt: null,
-      lastSweepAt: null,
-      seedVersion: null,
-    });
-    expect(workspace.seedVersion).toBe(seedVersionFor(created));
-    expect(await store.getWorkspace(workspace.id)).toEqual(workspace);
-    expect(await store.listCases(workspace.id)).toHaveLength(17);
-    expect(await store.listOrders(workspace.id)).toHaveLength(seed.orders.length);
-    expect(await store.listEvents(workspace.id, "demo-inr-64")).toHaveLength(4);
+    const shop = await seedSample(
+      store,
+      sampleShop(testUser(), new Date(created), null, "sh_seedtests000001"),
+      {
+        now: new Date(created),
+      },
+    );
+    expect(shop.seedVersion).toBe(seedVersionFor(created));
+    expect(shop.seededAt).toBe(created);
+    expect(await store.getShop(shop.id)).toEqual(shop);
+    expect(await store.listCases(shop.id)).toHaveLength(17);
+    expect(await store.listOrders(shop.id)).toHaveLength(seed.orders.length);
+    expect(await store.listEvents(shop.id, "demo-inr-64")).toHaveLength(4);
 
     // Seeding again starts over instead of adding to what's there.
-    await store.saveOrder(workspace.id, { ...seed.orders[0]!, id: "W-9999" });
-    await seedDemo(store, workspace);
-    expect(await store.getOrder(workspace.id, "W-9999")).toBeNull();
+    await store.saveOrder(shop.id, { ...seed.orders[0]!, id: "W-9999" });
+    await seedSample(store, shop, { now: new Date(created) });
+    expect(await store.getOrder(shop.id, "W-9999")).toBeNull();
   });
 });

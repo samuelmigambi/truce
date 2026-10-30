@@ -1,37 +1,25 @@
 "use client";
 
 import { AnimatePresence, motion, useInView } from "motion/react";
-import {
-  Check,
-  FileSearch,
-  Gavel,
-  MessageSquareText,
-  Pause,
-  Play,
-  ShieldCheck,
-  Sparkles,
-} from "lucide-react";
+import { Check, Gavel, Pause, Play } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { formatUsd } from "@/lib/money";
 import { costMoves } from "@/lib/rules/options";
 import { duration, ease, spring } from "../motion";
 import { Avatar } from "../ui/avatar";
-import { Chip } from "../ui/chip";
 import { cn } from "../ui/cn";
-import { Typewriter } from "./typewriter";
+import { Typewriter } from "../ui/typewriter";
 import { useCalmMotion } from "../use-reduced-motion";
 
 /**
- * The landing page's product preview: one real-shaped case moving through read, evidence,
- * recommend and approve. It loops while it's on screen, pauses on hover, and waits for clicks
- * when the visitor prefers less motion.
+ * The landing page's product preview: one case, read, decided and approved. It loops while it's
+ * on screen, pauses on hover, and waits for clicks when the visitor prefers less motion.
  */
 
 const PHASES = [
-  { id: "read", label: "Read", icon: MessageSquareText, ms: 3600 },
-  { id: "evidence", label: "Evidence", icon: FileSearch, ms: 3600 },
-  { id: "recommend", label: "Recommend", icon: Gavel, ms: 4000 },
-  { id: "approve", label: "Approve", icon: Check, ms: 5600 },
+  { id: "read", label: "Read", ms: 4400 },
+  { id: "decide", label: "Decide", ms: 4800 },
+  { id: "approve", label: "Approve", ms: 6000 },
 ] as const;
 
 const COSTS = costMoves({
@@ -43,12 +31,7 @@ const COSTS = costMoves({
   evidence: "strong",
 });
 
-const EVIDENCE = [
-  { id: "E1", kind: "Tracking", text: "USPS: delivered 4 days ago, front porch" },
-  { id: "E2", kind: "Payment", text: "Shipped to the address on the PayPal payment" },
-  { id: "E3", kind: "Order", text: "Tracking was added to the PayPal order" },
-  { id: "E4", kind: "Message", text: "Buyer says the candles never arrived" },
-];
+const MOVE = { fight: "Fight", settle: "Settle", refund: "Refund" } as const;
 
 export function CasePreview({ className }: { className?: string }) {
   const reduced = useCalmMotion();
@@ -77,116 +60,88 @@ export function CasePreview({ className }: { className?: string }) {
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}
       className={cn(
-        "border-line bg-paper relative overflow-hidden rounded-[18px] border shadow-[0_1px_2px_rgb(30_38_20/0.05),0_30px_70px_-30px_rgb(30_38_20/0.3)]",
+        "border-line bg-paper relative overflow-hidden rounded-[22px] border p-6 shadow-[0_1px_2px_rgb(30_38_20/0.05),0_40px_80px_-36px_rgb(30_38_20/0.32)] sm:p-7",
         className,
       )}
     >
-      {/* Header */}
-      <div className="border-line-soft flex items-center justify-between gap-3 border-b px-5 py-3">
-        <p className="text-ink-3 truncate text-xs">
-          Cases <span className="px-1">/</span> <span className="text-ink-2">PP-D-48121</span>
-        </p>
-        <div className="flex items-center gap-2">
-          <Chip tone="mist" size="sm" dot>
-            Demo copy
-          </Chip>
-          {!reduced && (
-            <button
-              type="button"
-              onClick={() => setPaused((p) => !p)}
-              aria-label={paused ? "Play the preview" : "Pause the preview"}
-              className="text-ink-3 hover:bg-wash hover:text-ink flex size-6 items-center justify-center rounded-md transition-colors [&_svg]:size-3"
-            >
-              {paused ? <Play /> : <Pause />}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Case facts */}
-      <div className="flex items-start gap-3 px-5 pt-4">
-        <Avatar name="Sam Rivera" />
+      {/* The case */}
+      <div className="flex items-center gap-3.5">
+        <Avatar name="Sam Rivera" size="lg" />
         <div className="min-w-0 flex-1">
-          <div className="flex items-baseline justify-between gap-3">
-            <p className="text-ink truncate text-[15px] font-semibold">Sam Rivera</p>
-            <p className="text-ink text-[15px] font-semibold tabular-nums">$86</p>
-          </div>
-          <p className="text-ink-2 truncate text-[13px]">Cedar &amp; Smoke candle trio · W-1042</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            <Chip size="sm">Not received</Chip>
-            <Chip size="sm" tone="outline">
-              Inquiry
-            </Chip>
-            <Chip size="sm" tone="neutral">
-              Due in 8 days
-            </Chip>
-          </div>
+          <p className="text-ink truncate text-[17px] font-semibold">Sam Rivera</p>
+          <p className="text-ink-2 truncate text-[15px]">Cedar &amp; Smoke candle trio</p>
         </div>
+        <p className="text-ink text-[22px] font-semibold tracking-[-0.02em] tabular-nums">$86</p>
       </div>
 
-      {/* Steps */}
-      <div
-        role="tablist"
-        aria-label="Preview steps"
-        className="rounded-btn bg-ink/[0.045] mx-5 mt-4 grid grid-cols-4 gap-1 p-[3px]"
-      >
-        {PHASES.map((p, i) => {
-          const Icon = p.icon;
-          const active = i === phase;
-          const done = i < phase;
-          return (
-            <button
-              key={p.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setPhase(i)}
-              className={cn(
-                "relative flex h-8 items-center justify-center gap-1.5 overflow-hidden rounded-[8px] text-xs font-medium transition-colors",
-                active ? "text-ink" : done ? "text-ink-2" : "text-ink-3 hover:text-ink-2",
-              )}
-            >
-              {active && (
-                <motion.span
-                  layoutId="preview-step"
-                  transition={spring.snappy}
-                  className="bg-lemon absolute inset-0 rounded-[8px]"
-                />
-              )}
-              {active && playing && (
-                <motion.span
-                  key={`${cycle}-${phase}`}
-                  className="bg-ink/25 absolute inset-x-0 bottom-0 h-[2px] origin-left"
-                  initial={{ scaleX: 0 }}
-                  animate={{ scaleX: 1 }}
-                  transition={{ duration: p.ms / 1000, ease: "linear" }}
-                />
-              )}
-              <span className="relative flex items-center gap-1.5 [&_svg]:size-3.5">
-                {done ? <Check className="text-moss" strokeWidth={2.5} /> : <Icon />}
-                <span className="max-sm:hidden">{p.label}</span>
-              </span>
-            </button>
-          );
-        })}
+      {/* Where it is */}
+      <div className="mt-6 flex items-center gap-2">
+        <div role="tablist" aria-label="Preview steps" className="grid flex-1 grid-cols-3 gap-1.5">
+          {PHASES.map((p, i) => {
+            const active = i === phase;
+            const done = i < phase;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setPhase(i)}
+                className="group text-left"
+              >
+                <span className="bg-ink/[0.07] relative block h-1 overflow-hidden rounded-full">
+                  {(done || (active && !playing)) && (
+                    <span className="bg-moss absolute inset-0 rounded-full" />
+                  )}
+                  {active && playing && (
+                    <motion.span
+                      key={`${cycle}-${phase}`}
+                      className="bg-moss absolute inset-0 origin-left rounded-full"
+                      initial={{ scaleX: 0 }}
+                      animate={{ scaleX: 1 }}
+                      transition={{ duration: p.ms / 1000, ease: "linear" }}
+                    />
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    "mt-2 block text-[14px] font-medium transition-colors",
+                    active ? "text-ink" : "text-ink-3 group-hover:text-ink-2",
+                  )}
+                >
+                  {p.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {!reduced && (
+          <button
+            type="button"
+            onClick={() => setPaused((p) => !p)}
+            aria-label={paused ? "Play the preview" : "Pause the preview"}
+            className="text-ink-3 hover:bg-wash hover:text-ink -mr-1.5 flex size-8 shrink-0 items-center justify-center self-start rounded-lg transition-colors [&_svg]:size-3.5"
+          >
+            {paused ? <Play /> : <Pause />}
+          </button>
+        )}
       </div>
 
-      {/* Phase body */}
-      <div className="relative h-[316px] px-5 pt-4 pb-5 sm:h-[264px]">
+      {/* What happens at that step */}
+      <div className="relative mt-5 h-[262px]">
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             key={`${current.id}-${cycle}`}
             role="tabpanel"
             aria-label={current.label}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0, transition: { duration: duration.base, ease: ease.out } }}
-            exit={{ opacity: 0, y: -4, transition: { duration: duration.fast, ease: ease.in } }}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0, transition: { duration: duration.slow, ease: ease.out } }}
+            exit={{ opacity: 0, y: -6, transition: { duration: duration.base, ease: ease.in } }}
             className="h-full"
           >
-            {current.id === "read" && <ReadPhase />}
-            {current.id === "evidence" && <EvidencePhase />}
-            {current.id === "recommend" && <RecommendPhase />}
-            {current.id === "approve" && <ApprovePhase still={Boolean(reduced)} />}
+            {current.id === "read" && <ReadStep />}
+            {current.id === "decide" && <DecideStep />}
+            {current.id === "approve" && <ApproveStep still={Boolean(reduced)} />}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -194,44 +149,27 @@ export function CasePreview({ className }: { className?: string }) {
   );
 }
 
-function ModelTag({ name, className }: { name: string; className?: string }) {
-  return (
-    <span
-      className={cn("text-ink-3 inline-flex items-center gap-1 text-[11px] font-medium", className)}
-    >
-      <Sparkles className="size-3" />
-      Nemotron {name}
-    </span>
-  );
-}
-
 const appear = (delay: number) => ({
-  initial: { opacity: 0, y: 6 },
-  animate: { opacity: 1, y: 0, transition: { duration: duration.base, ease: ease.out, delay } },
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0, transition: { duration: duration.slow, ease: ease.out, delay } },
 });
 
-function ReadPhase() {
+function ReadStep() {
   return (
     <div className="flex h-full flex-col gap-4">
-      <motion.div
+      <motion.p
         {...appear(0.05)}
-        className="bg-mist max-w-[86%] rounded-[12px] rounded-tl-[4px] px-3.5 py-2.5"
+        className="bg-cream text-ink max-w-[88%] rounded-[16px] rounded-tl-[5px] px-4 py-3 text-[15px] leading-relaxed"
       >
-        <p className="text-ink text-[13px] leading-relaxed">
-          &ldquo;My candles never arrived. It&rsquo;s been over a week.&rdquo;
-        </p>
-        <p className="text-ink-2 mt-1 text-[11px]">Sam Rivera, 2 days ago</p>
-      </motion.div>
-      <motion.div {...appear(0.45)} className="rounded-card border-line-soft border p-3.5">
-        <div className="flex items-center justify-between">
-          <p className="text-ink text-xs font-medium">Truce&rsquo;s read</p>
-          <ModelTag name="Lightning" />
-        </div>
-        <p className="text-ink-2 mt-1.5 min-h-[66px] text-[13px] leading-relaxed">
+        &ldquo;My candles never arrived. It&rsquo;s been over a week.&rdquo;
+      </motion.p>
+      <motion.div {...appear(0.4)}>
+        <p className="text-ink text-[15px] font-semibold">Truce&rsquo;s read</p>
+        <p className="text-ink-2 mt-1.5 min-h-[78px] text-[15px] leading-relaxed">
           <Typewriter
-            delay={0.7}
-            cps={80}
-            text="An item-not-received inquiry for $86. USPS shows it delivered 4 days ago, so it may be on a porch or with a neighbor. 8 days left to reply."
+            delay={0.65}
+            cps={75}
+            text="USPS shows it delivered 4 days ago, to the address on the PayPal payment. It may be on a porch or with a neighbor."
           />
         </p>
       </motion.div>
@@ -239,131 +177,71 @@ function ReadPhase() {
   );
 }
 
-function EvidencePhase() {
-  return (
-    <div className="flex h-full flex-col">
-      <ul className="space-y-1.5">
-        {EVIDENCE.map((e, i) => (
-          <motion.li
-            key={e.id}
-            {...appear(0.1 + i * 0.32)}
-            className="border-line-soft flex items-center gap-2.5 rounded-[10px] border px-3 py-2"
-          >
-            <span className="bg-ink text-lemon inline-flex h-5 items-center rounded-[6px] px-1.5 text-[10px] font-semibold tabular-nums">
-              {e.id}
-            </span>
-            <span className="text-ink-3 w-16 shrink-0 text-[11px] font-medium">{e.kind}</span>
-            <span className="text-ink min-w-0 flex-1 truncate text-[13px]">{e.text}</span>
-            {i < 3 && (
-              <motion.span
-                initial={{ scale: 0 }}
-                animate={{ scale: 1, transition: { ...spring.pop, delay: 0.3 + i * 0.32 } }}
-                className="bg-lemon flex size-4 items-center justify-center rounded-full"
-              >
-                <Check className="text-ink size-2.5" strokeWidth={3} />
-              </motion.span>
-            )}
-          </motion.li>
-        ))}
-      </ul>
-      <motion.div
-        {...appear(1.55)}
-        className="bg-mist mt-auto flex items-center justify-between rounded-[10px] px-3 py-2.5"
-      >
-        <span className="text-ink flex items-center gap-2 text-[13px] font-medium">
-          <ShieldCheck className="text-moss size-4" />
-          Seller Protection covers this case
-        </span>
-        <span className="text-ink-2 text-[11px]">Checked in code</span>
-      </motion.div>
-    </div>
-  );
-}
-
-function RecommendPhase() {
+function DecideStep() {
   const max = Math.max(...COSTS.map((c) => c.worst));
-  const labels = { fight: "Fight", settle: "Settle", refund: "Refund" } as const;
   return (
     <div className="flex h-full flex-col">
-      <motion.div {...appear(0.05)} className="flex items-center gap-2">
-        <Chip tone="ink" size="sm">
+      <motion.div {...appear(0.05)} className="flex items-start gap-3">
+        <span className="bg-ink text-cream inline-flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] px-2.5 text-[13px] font-medium [&_svg]:size-3.5">
+          <Gavel />
           Fight
-        </Chip>
-        <span className="text-ink-2 text-[11px] font-medium">High confidence</span>
-        <ModelTag name="Ultra" className="ml-auto" />
-      </motion.div>
-      <motion.p {...appear(0.2)} className="text-ink mt-2 text-[15px] leading-snug font-semibold">
-        Tracking shows it was delivered to the PayPal address.{" "}
-        <span className="inline-flex translate-y-[-1px] gap-1 align-middle">
-          <EvidenceTag id="E1" />
-          <EvidenceTag id="E2" />
         </span>
-      </motion.p>
-      <motion.div
-        {...appear(0.45)}
-        className="rounded-card border-line-soft mt-auto space-y-2.5 border p-3.5"
-      >
-        <p className="text-ink-3 flex justify-between text-[11px] font-medium">
-          <span>Expected cost</span>
-          <span>Fees included</span>
+        <p className="text-ink text-[16px] leading-snug font-semibold">
+          Tracking shows it was delivered to the PayPal address.
         </p>
-        {COSTS.map((c, i) => (
-          <div key={c.move} className="grid grid-cols-[56px_1fr_52px] items-center gap-3">
-            <span
-              className={cn("text-xs font-medium", c.move === "fight" ? "text-ink" : "text-ink-2")}
-            >
-              {labels[c.move]}
-            </span>
-            <div className="bg-ink/[0.06] h-2 overflow-hidden rounded-full">
-              <motion.div
+      </motion.div>
+      <motion.div {...appear(0.3)} className="mt-auto space-y-3.5">
+        {COSTS.map((c, i) => {
+          const pick = c.move === "fight";
+          return (
+            <div key={c.move} className="grid grid-cols-[64px_1fr_64px] items-center gap-4">
+              <span className={cn("text-[15px]", pick ? "text-ink font-semibold" : "text-ink-2")}>
+                {MOVE[c.move]}
+              </span>
+              <span className="bg-ink/[0.06] block h-2.5 overflow-hidden rounded-full">
+                <motion.span
+                  className={cn(
+                    "block h-full origin-left rounded-full",
+                    pick ? "bg-moss" : "bg-ink/25",
+                  )}
+                  style={{ width: `${Math.max(4, (c.expected / max) * 100)}%` }}
+                  initial={{ scaleX: 0 }}
+                  animate={{
+                    scaleX: 1,
+                    transition: {
+                      duration: duration.slower + 0.3,
+                      ease: ease.out,
+                      delay: 0.5 + i * 0.12,
+                    },
+                  }}
+                />
+              </span>
+              <span
                 className={cn(
-                  "h-full origin-left rounded-full",
-                  c.move === "fight" ? "bg-moss" : "bg-ink/25",
+                  "text-right text-[15px] tabular-nums",
+                  pick ? "text-ink font-semibold" : "text-ink-2",
                 )}
-                style={{ width: `${Math.max(3, (c.expected / max) * 100)}%` }}
-                initial={{ scaleX: 0 }}
-                animate={{
-                  scaleX: 1,
-                  transition: {
-                    duration: duration.slower + 0.2,
-                    ease: ease.out,
-                    delay: 0.6 + i * 0.12,
-                  },
-                }}
-              />
+              >
+                {formatUsd(c.expected)}
+              </span>
             </div>
-            <span
-              className={cn(
-                "text-right text-xs tabular-nums",
-                c.move === "fight" ? "text-ink font-semibold" : "text-ink-2",
-              )}
-            >
-              {formatUsd(c.expected)}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </motion.div>
     </div>
   );
 }
 
-function EvidenceTag({ id }: { id: string }) {
-  return (
-    <span className="bg-mist text-moss-deep inline-flex h-[18px] items-center rounded-[5px] px-1 text-[10px] font-semibold tabular-nums">
-      {id}
-    </span>
-  );
-}
-
-function ApprovePhase({ still }: { still: boolean }) {
+function ApproveStep({ still }: { still: boolean }) {
+  // Typing, then the press, then sent, then the buyer's answer a beat later.
   const [step, setStep] = useState(still ? 3 : 0);
 
   useEffect(() => {
     if (still) return;
     const timers = [
-      window.setTimeout(() => setStep(1), 2100),
-      window.setTimeout(() => setStep(2), 2500),
-      window.setTimeout(() => setStep(3), 3900),
+      window.setTimeout(() => setStep(1), 2600),
+      window.setTimeout(() => setStep(2), 3000),
+      window.setTimeout(() => setStep(3), 4300),
     ];
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [still]);
@@ -371,33 +249,29 @@ function ApprovePhase({ still }: { still: boolean }) {
   const sent = step >= 2;
   return (
     <div className="flex h-full flex-col">
-      <motion.div {...appear(0.05)} className="rounded-card border-line-soft border p-3.5">
-        <p className="text-ink-3 flex items-center justify-between text-[11px] font-medium">
-          <span>Message to Sam</span>
-          <span>Nemotron Super VL</span>
-        </p>
-        <p className="text-ink mt-1.5 min-h-[60px] text-[13px] leading-relaxed">
+      <motion.div {...appear(0.05)} className="bg-cream rounded-[16px] px-4 py-3.5">
+        <p className="text-ink min-h-[72px] text-[15px] leading-relaxed">
           <Typewriter
-            cps={110}
-            delay={0.25}
-            text="Hi Sam, thanks for getting in touch. USPS shows your order was delivered 4 days ago to the address on your PayPal payment. Could you check with neighbors?"
+            cps={95}
+            delay={0.3}
+            text="Hi Sam, USPS shows your order was delivered 4 days ago to the address on your PayPal payment. Could you check with your neighbors?"
           />
         </p>
-        <p className="border-line-soft text-moss-deep mt-2 flex items-center gap-1.5 border-t pt-2 text-[11px]">
-          <Check className="size-3" strokeWidth={2.5} />
-          Every sentence checked against the evidence
+        <p className="text-moss-deep mt-3 flex items-center gap-2 text-[14px] font-medium">
+          <Check className="size-4" strokeWidth={2.5} />
+          Every sentence checked
         </p>
       </motion.div>
 
       <div className="mt-auto flex items-center gap-3">
-        <motion.div
+        <motion.span
           layout
           transition={spring.layout}
-          className={cn(
-            "rounded-btn relative flex h-10 items-center justify-center gap-2 overflow-hidden px-4 text-sm font-medium",
-            sent ? "bg-lemon text-ink" : "bg-ink text-cream",
-          )}
           animate={{ scale: step === 1 ? 0.96 : 1 }}
+          className={cn(
+            "rounded-btn relative inline-flex h-11 items-center justify-center gap-2 overflow-hidden px-5 text-[15px] font-medium",
+            sent ? "bg-lemon text-on-lemon" : "bg-ink text-cream",
+          )}
         >
           <AnimatePresence mode="popLayout" initial={false}>
             {sent ? (
@@ -406,15 +280,8 @@ function ApprovePhase({ still }: { still: boolean }) {
                 className="flex items-center gap-2"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
               >
-                <motion.span
-                  initial={{ scale: 0, rotate: -30 }}
-                  animate={{ scale: 1, rotate: 0, transition: spring.pop }}
-                  className="bg-ink flex size-5 items-center justify-center rounded-full"
-                >
-                  <Check className="text-lemon size-3" strokeWidth={3} />
-                </motion.span>
+                <Check className="size-4" strokeWidth={2.75} />
                 Sent
               </motion.span>
             ) : (
@@ -423,19 +290,11 @@ function ApprovePhase({ still }: { still: boolean }) {
               </motion.span>
             )}
           </AnimatePresence>
-        </motion.div>
-        <AnimatePresence mode="wait">
-          {step === 2 && (
-            <motion.span key="waiting" {...appear(0)} exit={{ opacity: 0 }}>
-              <Chip tone="outline" dot>
-                Waiting on buyer
-              </Chip>
-            </motion.span>
-          )}
+        </motion.span>
+        <AnimatePresence>
           {step === 3 && (
-            <motion.span key="closed" {...appear(0)} className="flex items-center gap-2">
-              <Chip tone="lemon">Buyer closed the case</Chip>
-              <span className="text-ink text-xs font-medium tabular-nums">Kept $86</span>
+            <motion.span {...appear(0)} className="text-ink text-[15px] font-medium">
+              Sam closed the case. <span className="text-moss-deep">Kept $86.</span>
             </motion.span>
           )}
         </AnimatePresence>

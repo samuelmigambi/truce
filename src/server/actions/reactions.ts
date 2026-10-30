@@ -1,13 +1,13 @@
 import "server-only";
 
-import type { Case, CaseEvent, CaseMessage, DisputeStage, Move } from "@/lib/domain";
-import { formatUsd, type Cents } from "@/lib/money";
+import type { Case, CaseEvent, CaseMessage, DisputeStage, Move, Shop } from "@/lib/domain";
+import { formatMoney, type Cents } from "@/lib/money";
 import { seedCaseId } from "@/server/demo/seed";
 import type { Store } from "@/server/store";
 import { closeCase } from "./close";
 
 /**
- * In demo copies, buyers and PayPal answer the seller's approved step a few seconds later, so each
+ * In a sample shop, buyers and PayPal answer the seller's approved step a few seconds later, so each
  * story reaches its end and the dashboard moves. The step waits on the case as `pendingReaction`
  * (what the seller did, never how it ends) and plays on the first read after it's due.
  */
@@ -68,7 +68,7 @@ export function scriptFor(
 const firstName = (kase: Case) => kase.buyer.name.split(" ")[0] ?? kase.buyer.name;
 
 /** What the buyer or PayPal says, in each seeded case's own voice where it matters. */
-function lines(kase: Case, script: Script, offer: Cents): string[] {
+function lines(kase: Case, script: Script, offer: Cents, money: (c: Cents) => string): string[] {
   const seed = seedCaseId(kase.id);
   switch (script) {
     case "buyer_closes":
@@ -80,7 +80,7 @@ function lines(kase: Case, script: Script, offer: Cents): string[] {
     case "buyer_accepts_offer":
       return seed === "demo-nad-42"
         ? ["That's fair, thank you. I'll keep the candle."]
-        : [`Thanks, ${formatUsd(offer)} works for me.`];
+        : [`Thanks, ${money(offer)} works for me.`];
     case "buyer_escalates":
       return [
         seed === "demo-damaged-28"
@@ -121,10 +121,11 @@ function claimDue(now: Date): string {
 /** Plays one reaction: the reply, the events, and the case's new state. */
 export async function playReaction(
   store: Store,
-  workspaceId: string,
+  shop: Shop,
   kase: StoredCase,
   now: Date,
 ): Promise<Case> {
+  const money = (cents: Cents) => formatMoney(cents, shop.currency);
   const reaction = kase.pendingReaction;
   if (!reaction) return kase;
   const offer = reaction.offerAmount ?? 0;
@@ -132,11 +133,11 @@ export async function playReaction(
   const at = reaction.dueAt;
   let next: Case = withoutReaction({ ...kase, updatedAt: at });
   if (!script) {
-    await store.saveCase(workspaceId, next);
+    await store.saveCase(shop.id, next);
     return next;
   }
 
-  const said = lines(kase, script, offer);
+  const said = lines(kase, script, offer, money);
   const speaker: CaseMessage["from"] = script.startsWith("paypal") ? "paypal" : "buyer";
   const messages: CaseMessage[] = said.map((text, i) => ({
     id: `${reaction.id}-m${i + 1}`,
@@ -156,7 +157,7 @@ export async function playReaction(
         actor: "buyer",
         title: `${firstName(kase)} found the parcel`,
       });
-      next = await closeCase(store, workspaceId, next, "buyer_closed", 0, new Date(at));
+      next = await closeCase(store, shop, next, "buyer_closed", 0, new Date(at));
       events.push({ at, kind: "closed", actor: "buyer", title: `${name} closed the case` });
       break;
     case "buyer_accepts_offer":
@@ -164,19 +165,19 @@ export async function playReaction(
         at,
         kind: "buyer_reply",
         actor: "buyer",
-        title: `${name} accepted your ${formatUsd(offer)} offer`,
+        title: `${name} accepted your ${money(offer)} offer`,
       });
-      next = await closeCase(store, workspaceId, next, "settled", offer, new Date(at));
+      next = await closeCase(store, shop, next, "settled", offer, new Date(at));
       events.push({
         at,
         kind: "closed",
         actor: "paypal",
-        title: `Closed: settled for ${formatUsd(offer)}`,
+        title: `Closed: settled for ${money(offer)}`,
       });
       break;
     case "buyer_escalates":
       next = { ...next, stage: "claim", status: "needs_you", dueAt: claimDue(now) };
-      await store.saveCase(workspaceId, next);
+      await store.saveCase(shop.id, next);
       events.push({
         at,
         kind: "escalated",
@@ -186,34 +187,34 @@ export async function playReaction(
       break;
     case "paypal_rules_seller":
       events.push({ at, kind: "decided", actor: "paypal", title: "PayPal ruled in your favor" });
-      next = await closeCase(store, workspaceId, next, "won", 0, new Date(at));
+      next = await closeCase(store, shop, next, "won", 0, new Date(at));
       events.push({
         at,
         kind: "closed",
         actor: "paypal",
-        title: `Closed: you kept ${formatUsd(next.moneyKept)}`,
+        title: `Closed: you kept ${money(next.moneyKept)}`,
       });
       break;
     case "paypal_rules_buyer": {
       events.push({ at, kind: "decided", actor: "paypal", title: "PayPal ruled for the buyer" });
-      next = await closeCase(store, workspaceId, next, "lost", kase.amount, new Date(at));
-      const fee = next.feeCharged > 0 ? `, plus a ${formatUsd(next.feeCharged)} dispute fee` : "";
+      next = await closeCase(store, shop, next, "lost", kase.amount, new Date(at));
+      const fee = next.feeCharged > 0 ? `, plus a ${money(next.feeCharged)} dispute fee` : "";
       events.push({
         at,
         kind: "closed",
         actor: "paypal",
-        title: `Closed: ${formatUsd(kase.amount)} refunded to the buyer${fee}`,
+        title: `Closed: ${money(kase.amount)} refunded to the buyer${fee}`,
       });
       break;
     }
     case "buyer_thanks":
-      await store.saveCase(workspaceId, next);
+      await store.saveCase(shop.id, next);
       events.push({ at, kind: "buyer_reply", actor: "buyer", title: `${firstName(kase)} replied` });
       break;
   }
   await Promise.all(
     events.map((event, i) =>
-      store.addEvent(workspaceId, kase.id, { id: `${reaction.id}-e${i + 1}`, ...event }),
+      store.addEvent(shop.id, kase.id, { id: `${reaction.id}-e${i + 1}`, ...event }),
     ),
   );
   return next;
@@ -230,7 +231,7 @@ export function hasDueReaction(cases: Case[], now: Date): boolean {
 /** Plays every reaction that's due among these cases; returns the cases as they now stand. */
 export async function playDueReactions(
   store: Store,
-  workspaceId: string,
+  shop: Shop,
   cases: Case[],
   now = new Date(),
 ): Promise<Case[]> {
@@ -238,7 +239,7 @@ export async function playDueReactions(
     cases.map((kase) => {
       const reaction = (kase as StoredCase).pendingReaction;
       if (!reaction || Date.parse(reaction.dueAt) > now.getTime()) return kase;
-      return playReaction(store, workspaceId, kase as StoredCase, now);
+      return playReaction(store, shop, kase as StoredCase, now);
     }),
   );
 }

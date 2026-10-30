@@ -2,9 +2,9 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import type { ApproveRequest, ApproveResponse } from "@/lib/api-types";
-import { SHOP } from "@/lib/catalog";
-import type { Analysis, Case, CaseEvent, CaseStatus, Move, Order, Workspace } from "@/lib/domain";
-import { formatUsd, toPayPalValue } from "@/lib/money";
+import type { Analysis, Case, CaseEvent, CaseStatus, Move, Order, Shop } from "@/lib/domain";
+import { formatMoney, toPayPalValue, type Cents } from "@/lib/money";
+import { log } from "@/server/log";
 import { PayPalError, type PayPal } from "@/server/paypal/client";
 import type { PayPalExtras } from "@/server/paypal/extras";
 import { stageOf } from "@/server/paypal/map";
@@ -22,8 +22,8 @@ import { DELAYS, scriptFor, withoutReaction, type StoredCase } from "./reactions
  * - Fight, claim under review: provide-supporting-info.
  * - Settle (inquiry only): make-offer, a REFUND for the offer amount.
  * - Refund: accept-claim, a REFUND.
- * In the live sandbox each call goes to PayPal, checked first against the dispute's own links. In a
- * demo copy it's recorded as simulated, and the scripted reply is scheduled.
+ * In a real shop each call goes to the shop's own PayPal app, checked first against the dispute's
+ * own links. In a sample shop it's recorded as simulated, and the scripted reply is scheduled.
  */
 
 export type PayPalAction =
@@ -86,7 +86,7 @@ function allows(options: unknown, path: [string, string], value: string): boolea
   return !Array.isArray(list) || list.includes(value);
 }
 
-/** For the live sandbox: the move's call, if the dispute's links say PayPal allows it now. */
+/** For a real shop: the move's call, if the dispute's links say PayPal allows it now. */
 export function liveAction(dispute: P.Dispute, move: Move): PayPalAction {
   const allowed = allowedActions(dispute);
   const inquiry = stageOf(dispute) === "inquiry";
@@ -130,7 +130,7 @@ const listOf = (items: string[]) =>
 /** A PayPal refusal, as a message the seller can act on. Nothing is sent when this is thrown. */
 export function refusal(error: unknown, doing: string): ActionError {
   if (!(error instanceof PayPalError)) {
-    console.error("[approve] PayPal unreachable", error);
+    log.warn("approve.paypal_unreachable", { error });
     return new ActionError(
       502,
       "Couldn't reach PayPal, so nothing was sent. Try again in a moment.",
@@ -162,7 +162,7 @@ export function refusal(error: unknown, doing: string): ActionError {
 
 export interface ApproveInput {
   store: Store;
-  workspace: Workspace;
+  shop: Shop;
   caseId: string;
   request: ApproveRequest;
   paypal?: PayPal | null;
@@ -171,23 +171,34 @@ export interface ApproveInput {
 }
 
 export async function approveCase(input: ApproveInput): Promise<ApproveResponse> {
-  const { store, workspace, caseId, request } = input;
+  const { store, shop, caseId, request } = input;
   const now = input.now ?? new Date();
-  const kase = (await store.getCase(workspace.id, caseId)) as StoredCase | null;
-  if (!kase) throw new ActionError(404, "There's no case with that ID here.");
+  const kase = (await store.getCase(shop.id, caseId)) as StoredCase | null;
+  if (!kase) {
+    throw new ActionError(404, "There's no case with that ID in this shop.", {
+      code: "case_not_found",
+    });
+  }
   if (kase.status === "closed") throw new ActionError(409, "This case is already closed.");
   if (kase.pendingReaction) {
     throw new ActionError(409, "Your last step was sent. The reply should arrive in a moment.");
   }
-  const offer = request.move === "settle" ? checkOffer(kase, request.draft.offerAmount) : undefined;
+  const money = (cents: Cents) => formatMoney(cents, shop.currency);
+  const offer =
+    request.move === "settle" ? checkOffer(kase, request.draft.offerAmount, money) : undefined;
+  const simulated = shop.kind === "sample";
+  if (!simulated && (!shop.paypal || !input.paypal)) {
+    throw new ActionError(409, "Connect this shop's PayPal in settings first. Nothing was sent.", {
+      code: "paypal_not_connected",
+    });
+  }
   // One approval per case at a time, even across server instances: a double tap sends once.
-  const lock = `approve:${workspace.id}:${caseId}`;
+  const lock = `approve:${shop.id}:${caseId}`;
   if ((await store.increment(lock, 1, 20)) > 1) {
     throw new ActionError(409, "This step is already being sent.");
   }
 
-  const order = await store.getOrder(workspace.id, kase.orderId);
-  const simulated = workspace.kind === "demo";
+  const order = await store.getOrder(shop.id, kase.orderId);
   let action: PayPalAction;
   try {
     action = simulated
@@ -200,7 +211,7 @@ export async function approveCase(input: ApproveInput): Promise<ApproveResponse>
   }
   const endpoint = endpointFor(action, kase.paypalDisputeId);
 
-  const events = stepEvents(kase, action, offer, endpoint, simulated, now);
+  const events = stepEvents(kase, action, offer, simulated, now, money);
   const text = request.draft.text.trim();
   const toBuyer = action === "send_message" || action === "make_offer" || action === "accept_claim";
   let next: StoredCase = {
@@ -215,7 +226,7 @@ export async function approveCase(input: ApproveInput): Promise<ApproveResponse>
     updatedAt: now.toISOString(),
   };
   if (action === "accept_claim") {
-    next = await closeCase(store, workspace.id, next, "refunded", kase.amount, now);
+    next = await closeCase(store, shop, next, "refunded", kase.amount, now);
   }
   if (simulated) {
     const script = scriptFor(kase.id, request.move, kase.stage, kase.amount, offer);
@@ -230,27 +241,28 @@ export async function approveCase(input: ApproveInput): Promise<ApproveResponse>
     }
   }
   await Promise.all([
-    store.saveCase(workspace.id, next),
-    ...events.map((event) => store.addEvent(workspace.id, kase.id, event)),
+    store.saveCase(shop.id, next),
+    ...events.map((event) => store.addEvent(shop.id, kase.id, event)),
   ]);
+  log.info("approve.sent", { shopId: shop.id, caseId: kase.id, action, simulated });
 
   return {
     case: next,
-    events: await store.listEvents(workspace.id, kase.id),
+    events: await store.listEvents(shop.id, kase.id),
     simulated,
     paypal: { endpoint, status: 200 },
   };
 }
 
 /** An offer must be a real partial refund: more than nothing, less than the order. */
-function checkOffer(kase: Case, offer: number | undefined): number {
+function checkOffer(kase: Case, offer: number | undefined, money: (c: Cents) => string): number {
   if (!offer || !Number.isInteger(offer) || offer <= 0) {
     throw new ActionError(400, "An offer needs an amount in cents, such as 1000 for $10.");
   }
   if (offer >= kase.amount) {
     throw new ActionError(
       400,
-      `An offer has to be less than the ${formatUsd(kase.amount)} the buyer paid. To give it all back, refund instead.`,
+      `An offer has to be less than the ${money(kase.amount)} the buyer paid. To give it all back, refund instead.`,
     );
   }
   return offer;
@@ -263,8 +275,9 @@ async function sendLive(
   order: Order | null,
   offer: number | undefined,
 ) {
-  const { paypal, extras, request, store, workspace } = input;
-  if (!paypal) throw new ActionError(503, "PayPal isn't connected here, so nothing was sent.");
+  const { paypal, extras, request, store, shop } = input;
+  if (!paypal)
+    throw new ActionError(409, "This shop isn't connected to PayPal, so nothing was sent.");
   const id = kase.paypalDisputeId;
   let dispute: P.Dispute;
   try {
@@ -283,18 +296,22 @@ async function sendLive(
         await paypal.makeOffer(id, {
           note: text,
           offer_type: "REFUND",
-          offer_amount: { currency_code: "USD", value: toPayPalValue(offer!) },
+          // The offer is in the dispute's own currency.
+          offer_amount: {
+            currency_code: dispute.dispute_amount?.currency_code ?? shop.currency,
+            value: toPayPalValue(offer!),
+          },
         });
         break;
       case "provide_evidence": {
-        const analysis = await store.getAnalysis(workspace.id, kase.id);
+        const analysis = await store.getAnalysis(shop.id, kase.id);
         await paypal.provideEvidence(id, { evidences: [evidenceFor(order, request)] }, [
           {
             name: `evidence-${id}.pdf`,
             type: "application/pdf",
             bytes: evidencePdf(
               `Evidence for PayPal dispute ${id}`,
-              evidenceSections(kase, order, text, analysis, request),
+              evidenceSections(shop, kase, order, text, analysis, request),
             ),
           },
         ]);
@@ -302,7 +319,7 @@ async function sendLive(
       }
       case "provide_supporting_info":
         if (!extras)
-          throw new ActionError(503, "PayPal isn't connected here, so nothing was sent.");
+          throw new ActionError(409, "This shop isn't connected to PayPal, so nothing was sent.");
         await extras.provideSupportingInfo(id, text);
         break;
       case "accept_claim":
@@ -341,12 +358,9 @@ export function evidenceFor(order: Order | null, request: ApproveRequest): P.Evi
   };
 }
 
-const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-US", {
-    timeZone: "America/Los_Angeles",
-    dateStyle: "medium",
-    timeStyle: "short",
-  }) + " Pacific";
+/** "Oct 27, 2026, 10:45 AM (America/Los_Angeles)": in the shop's own zone, named. */
+const whenIn = (timeZone: string) => (iso: string) =>
+  `${new Date(iso).toLocaleString("en-US", { timeZone, dateStyle: "medium", timeStyle: "short" })} (${timeZone})`;
 
 const line = (a: Order["shipTo"]) =>
   a
@@ -357,26 +371,27 @@ const line = (a: Order["shipTo"]) =>
 
 /** The PDF's pages: what was ordered and paid, where it went, every scan, and the statement. */
 export function evidenceSections(
+  shop: Shop,
   kase: Case,
   order: Order | null,
   statement: string,
   analysis: Analysis | null,
   request: ApproveRequest,
 ): PdfSection[] {
+  const when = whenIn(shop.timeZone);
+  const money = (cents: Cents) => formatMoney(cents, shop.currency);
   const sections: PdfSection[] = [
     {
       heading: "The shop",
-      lines: [
-        `${SHOP.name}, ${SHOP.address.line1}, ${SHOP.address.city}, ${SHOP.address.state} ${SHOP.address.postalCode}`,
-      ],
+      lines: [shop.website ? `${shop.name}, ${shop.website}` : shop.name],
     },
   ];
   if (order) {
     sections.push({
       heading: "The order and the payment",
       lines: [
-        `Order ${order.id}, placed ${when(order.placedAt)}, for ${formatUsd(order.amount)}.`,
-        ...order.items.map((i) => `${i.quantity} x ${i.name}, ${formatUsd(i.unitPrice)} each`),
+        `Order ${order.id}, placed ${when(order.placedAt)}, for ${money(order.amount)}.`,
+        ...order.items.map((i) => `${i.quantity} x ${i.name}, ${money(i.unitPrice)} each`),
         `Paid with PayPal${order.captureId ? `, capture ${order.captureId}` : ""}. Seller Protection: ${order.protection ?? "not reported"}.`,
         `Buyer: ${order.buyer.name}${order.buyer.email ? `, ${order.buyer.email}` : ""}.`,
       ],
@@ -419,22 +434,22 @@ function stepEvents(
   kase: Case,
   action: PayPalAction,
   offer: number | undefined,
-  endpoint: string,
   simulated: boolean,
   now: Date,
+  money: (cents: Cents) => string,
 ): CaseEvent[] {
   const name = kase.buyer.name;
-  const amount = formatUsd(kase.amount);
+  const amount = money(kase.amount);
   const approved: Record<PayPalAction, string> = {
     send_message: `You approved the reply to ${name}`,
-    make_offer: `You approved a ${formatUsd(offer ?? 0)} partial refund offer`,
+    make_offer: `You approved a ${money(offer ?? 0)} partial refund offer`,
     provide_evidence: "You approved sending the evidence to PayPal",
     provide_supporting_info: "You approved sending more information to PayPal",
     accept_claim: `You approved a full refund of ${amount}`,
   };
   const sent: Record<PayPalAction, string> = {
     send_message: `Reply sent to ${name}`,
-    make_offer: `${formatUsd(offer ?? 0)} offer sent to ${name}`,
+    make_offer: `${money(offer ?? 0)} offer sent to ${name}`,
     provide_evidence: "Evidence sent to PayPal: proof of fulfillment, with the tracking",
     provide_supporting_info: "Supporting information sent to PayPal",
     accept_claim: `Claim accepted: ${amount} refunded to ${name}`,
@@ -449,8 +464,7 @@ function stepEvents(
       kind: "sent",
       actor: "truce",
       title: sent[action],
-      detail: simulated ? `Simulated in this demo copy: ${endpoint}` : endpoint,
-      ...(simulated ? { simulated: true } : {}),
+      ...(simulated ? { detail: "Simulated in this sample shop", simulated: true } : {}),
     },
   ];
 }

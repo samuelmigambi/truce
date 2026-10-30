@@ -6,7 +6,7 @@ import type {
   ChatCompletionCreateParamsStreaming,
 } from "openai/resources/chat/completions";
 import type { DisputeReason, DisputeStage, Draft, Move, Order, Recommendation } from "@/lib/domain";
-import { formatUsd } from "@/lib/money";
+import { formatMoney } from "@/lib/money";
 import { CitationFilter, splitCitations, type CitedSentence } from "../citations";
 import { formatDay } from "../dates";
 import { requestOptions, ThinkFilter } from "../loop";
@@ -54,12 +54,12 @@ export interface Drafted {
   raw: string;
 }
 
-/** The Draft from a written text: its cited IDs, the offer, PayPal's evidence type. */
 /** The shop's voice is calm: an exclamation mark becomes a full stop, while streaming and after. */
 export function calm(text: string): string {
   return text.replace(/\?!+/g, "?").replace(/!+/g, ".");
 }
 
+/** The Draft from a written text: its cited IDs, the offer, PayPal's evidence type. */
 export function toDraft(
   run: Run,
   kind: DraftKind,
@@ -97,17 +97,18 @@ function briefFor(
   recommendation: Recommendation,
   photos: number,
 ): string {
+  const { shop } = run.deps;
   const reasons = recommendation.reasons
     .map((r) => `- ${r.text} [${r.evidence.join(", ")}]`)
     .join("\n");
   return [
-    caseBlock(run.kase, run.now),
+    caseBlock(run.kase, run.now, shop),
     `The seller's move: ${MOVE_LABEL[recommendation.move]}. ${recommendation.headline}`,
     `Why:\n${reasons}`,
     recommendation.offerAmount
-      ? `The partial refund offered: ${formatUsd(recommendation.offerAmount)}.`
+      ? `The partial refund offered: ${formatMoney(recommendation.offerAmount, shop.currency)}.`
       : "",
-    `Evidence records:\n${evidenceBlock(records)}`,
+    `Evidence records:\n${evidenceBlock(records, shop.timeZone)}`,
     photos
       ? "The buyer's photos are attached. Mention what they show only as the photo records describe it."
       : "",
@@ -168,28 +169,29 @@ export function templateDraft(
   recommendation: Recommendation,
 ): string {
   const first = firstName(run.kase.buyer.name);
-  const shop = run.deps.workspace.shopName;
+  const { shop } = run.deps;
+  const money = (cents: number) => formatMoney(cents, shop.currency);
   const id = (kind: string) => records.find((r) => r.kind === kind)?.id;
   const mark = (...ids: (string | undefined)[]) => {
     const found = ids.filter((x): x is string => !!x);
     return found.length ? ` [${found.join(", ")}]` : "";
   };
   const t = run.order?.tracking;
-  const delivered = t?.deliveredAt ? formatDay(t.deliveredAt) : null;
-  const sign = `\n\nWarm regards,\n${shop}`;
+  const delivered = t?.deliveredAt ? formatDay(t.deliveredAt, shop.timeZone) : null;
+  const sign = `\n\nWarm regards,\n${shop.name}`;
   switch (kind) {
     case "message":
       return delivered
         ? `Hi ${first},\n\nThank you for letting us know. Our tracking shows the order was delivered on ${delivered}${mark(id("tracking"))}. It went to ${addressLine(run.order?.shipTo ?? null)}, the address on your PayPal payment${mark(id("payment"))}. Could you check around your door and with neighbors? If it still hasn't turned up, reply here and we'll look into it with you.${sign}`
         : `Hi ${first},\n\nThank you for letting us know. We're looking into your order with the carrier and will reply here shortly.${sign}`;
     case "offer":
-      return `Hi ${first},\n\nThank you for your message, and we're sorry it wasn't what you expected. The listing states the size and details of the item${mark(id("listing"))}. We'd like to offer a partial refund of ${formatUsd(recommendation.offerAmount ?? 0)}, and you keep the item.${sign}`;
+      return `Hi ${first},\n\nThank you for your message, and we're sorry it wasn't what you expected. The listing states the size and details of the item${mark(id("listing"))}. We'd like to offer a partial refund of ${money(recommendation.offerAmount ?? 0)}, and you keep the item.${sign}`;
     case "refund":
-      return `Hi ${first},\n\nWe're sorry about your order. We're refunding the full ${formatUsd(run.kase.amount)} to your PayPal account${mark(id("payment"))}. Thank you for your patience.${sign}`;
+      return `Hi ${first},\n\nWe're sorry about your order. We're refunding the full ${money(run.kase.amount)} to your PayPal account${mark(id("payment"))}. Thank you for your patience.${sign}`;
     case "evidence":
       return [
         run.order
-          ? `Order ${run.order.id} for ${formatUsd(run.order.amount)} was paid through PayPal${mark(id("order"), id("payment"))}.`
+          ? `Order ${run.order.id} for ${money(run.order.amount)} was paid through PayPal${mark(id("order"), id("payment"))}.`
           : "",
         t ? `It shipped with ${t.carrier} tracking ${t.number}${mark(id("tracking"))}.` : "",
         delivered ? `${t!.carrier} shows it delivered on ${delivered}${mark(id("tracking"))}.` : "",
@@ -215,7 +217,7 @@ export async function draftStep(
     model,
   });
   const system = draftSystem(
-    run.deps.workspace.shopName,
+    run.deps.shop,
     kind,
     run.kase.amount,
     recommendation.offerAmount ?? null,
@@ -266,9 +268,10 @@ export async function repairDraft(
   recommendation: Recommendation,
 ): Promise<Drafted> {
   const model = run.deps.models.draft;
+  const { shop } = run.deps;
   const content = [
-    `The seller's move: ${MOVE_LABEL[recommendation.move]}.${recommendation.offerAmount ? ` The offer: ${formatUsd(recommendation.offerAmount)}.` : ""}`,
-    `Evidence records:\n${evidenceBlock(records)}`,
+    `The seller's move: ${MOVE_LABEL[recommendation.move]}.${recommendation.offerAmount ? ` The offer: ${formatMoney(recommendation.offerAmount, shop.currency)}.` : ""}`,
+    `Evidence records:\n${evidenceBlock(records, shop.timeZone)}`,
     `The draft:\n${drafted.raw.trim()}`,
     `Flagged sentences:\n${flagged.map((f) => `- "${f.sentence}": ${f.problem}`).join("\n")}`,
     "Reply with the whole corrected draft.",
@@ -278,7 +281,7 @@ export async function repairDraft(
       {
         model,
         messages: [
-          { role: "system", content: repairSystem(run.deps.workspace.shopName) },
+          { role: "system", content: repairSystem(shop.name) },
           { role: "user", content },
         ],
         max_tokens: 900,

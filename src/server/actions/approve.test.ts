@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ApproveRequest } from "@/lib/api-types";
-import type { Case, Draft, Workspace } from "@/lib/domain";
-import { seedDemo } from "@/server/demo/seed";
+import type { Case, Draft } from "@/lib/domain";
+import { testRealShop, testSampleShop } from "@/server/testing/shops";
 import { PayPal } from "@/server/paypal/client";
 import { PayPalExtras } from "@/server/paypal/extras";
 import { MemoryStore } from "@/server/store/memory";
@@ -11,28 +11,20 @@ import { playDueReactions, type StoredCase } from "./reactions";
 const SECOND = 1000;
 const created = "2026-10-28T15:20:00.000Z";
 
-/** A seeded demo copy in a memory store whose clock the test moves. */
-async function demoCopy() {
+/** A seeded sample shop in a memory store whose clock the test moves. */
+async function sampleCopy() {
   const clock = { now: Date.parse(created) };
   const store = new MemoryStore(() => clock.now);
-  const workspace = await seedDemo(store, {
-    id: "demo-approve-tests-0001",
-    kind: "demo",
-    shopName: "Wick & Ember",
-    createdAt: created,
-    expiresAt: null,
-    lastSweepAt: null,
-    seedVersion: null,
-  });
+  const shop = await testSampleShop(store, created);
   const at = () => new Date(clock.now);
   const approve = (caseId: string, request: ApproveRequest) =>
-    approveCase({ store, workspace, caseId, request, now: at() });
+    approveCase({ store, shop, caseId, request, now: at() });
   const play = async (caseId: string) => {
-    const kase = (await store.getCase(workspace.id, caseId))!;
-    const [played] = await playDueReactions(store, workspace.id, [kase], at());
+    const kase = (await store.getCase(shop.id, caseId))!;
+    const [played] = await playDueReactions(store, shop, [kase], at());
     return played!;
   };
-  return { store, workspace, clock, approve, play };
+  return { store, shop, clock, approve, play };
 }
 
 const draft = (kind: Draft["kind"], text: string, extra: Partial<Draft> = {}): Draft => ({
@@ -42,9 +34,9 @@ const draft = (kind: Draft["kind"], text: string, extra: Partial<Draft> = {}): D
   ...extra,
 });
 
-describe("approving in a demo copy", () => {
+describe("approving in a sample shop", () => {
   it("records the step as simulated, then the not-received buyer closes the case", async () => {
-    const { store, workspace, clock, approve, play } = await demoCopy();
+    const { store, shop, clock, approve, play } = await sampleCopy();
     const result = await approve("demo-inr-86", {
       move: "fight",
       draft: draft(
@@ -69,9 +61,7 @@ describe("approving in a demo copy", () => {
       title: "You approved the reply to Sam Rivera",
     });
     expect(sent).toMatchObject({ kind: "sent", actor: "truce", simulated: true });
-    expect(sent!.detail).toBe(
-      "Simulated in this demo copy: POST /v1/customer/disputes/PP-D-48121/send-message",
-    );
+    expect(sent!.detail).toBe("Simulated in this sample shop");
     const pending = (result.case as StoredCase).pendingReaction!;
     expect(Date.parse(pending.dueAt) - clock.now).toBe(7 * SECOND);
 
@@ -93,16 +83,16 @@ describe("approving in a demo copy", () => {
       from: "buyer",
       text: expect.stringMatching(/parcel locker/),
     });
-    const titles = (await store.listEvents(workspace.id, "demo-inr-86")).map((e) => e.title);
+    const titles = (await store.listEvents(shop.id, "demo-inr-86")).map((e) => e.title);
     expect(titles.slice(-2)).toEqual(["Sam found the parcel", "Sam Rivera closed the case"]);
 
     // Playing again changes nothing.
     expect(await play("demo-inr-86")).toEqual(closed);
-    expect(await store.listEvents(workspace.id, "demo-inr-86")).toHaveLength(titles.length);
+    expect(await store.listEvents(shop.id, "demo-inr-86")).toHaveLength(titles.length);
   });
 
   it("settles the size complaint for $10, avoiding the claim fee", async () => {
-    const { store, workspace, clock, approve, play } = await demoCopy();
+    const { store, shop, clock, approve, play } = await sampleCopy();
     const result = await approve("demo-nad-42", {
       move: "settle",
       draft: draft(
@@ -121,11 +111,11 @@ describe("approving in a demo copy", () => {
       feeCharged: 0,
       feeAvoided: 1500,
     });
-    expect((await store.getOrder(workspace.id, closed.orderId))!.status).toBe("partially_refunded");
+    expect((await store.getOrder(shop.id, closed.orderId))!.status).toBe("partially_refunded");
   });
 
   it("fights the unauthorized claim with evidence, and PayPal rules for the seller two minutes later", async () => {
-    const { clock, approve, play } = await demoCopy();
+    const { clock, approve, play } = await sampleCopy();
     const result = await approve("demo-unauth-120", {
       move: "fight",
       draft: draft(
@@ -148,7 +138,7 @@ describe("approving in a demo copy", () => {
   });
 
   it("refunds the cracked mug at once, with no fee, and the buyer says thanks", async () => {
-    const { store, workspace, clock, approve, play } = await demoCopy();
+    const { store, shop, clock, approve, play } = await sampleCopy();
     const result = await approve("demo-damaged-28", {
       move: "refund",
       draft: draft("refund", "We're so sorry the mug arrived cracked. We've refunded you in full."),
@@ -160,7 +150,7 @@ describe("approving in a demo copy", () => {
       moneyKept: 0,
       feeCharged: 0,
     });
-    expect((await store.getOrder(workspace.id, result.case.orderId))!.status).toBe("refunded");
+    expect((await store.getOrder(shop.id, result.case.orderId))!.status).toBe("refunded");
     clock.now += 7 * SECOND;
     const after = await play("demo-damaged-28");
     expect(after.messages.at(-1)).toMatchObject({
@@ -171,7 +161,7 @@ describe("approving in a demo copy", () => {
   });
 
   it("charges the claim fee when a not-received claim is refunded", async () => {
-    const { approve } = await demoCopy();
+    const { approve } = await sampleCopy();
     const result = await approve("demo-inr-64", {
       move: "refund",
       draft: draft("refund", "Sorry it never arrived. We've refunded you."),
@@ -180,7 +170,7 @@ describe("approving in a demo copy", () => {
   });
 
   it("escalates when the seller fights a fair complaint, and the claim is then lost", async () => {
-    const { store, workspace, clock, approve, play } = await demoCopy();
+    const { store, shop, clock, approve, play } = await sampleCopy();
     await approve("demo-nad-42", {
       move: "fight",
       draft: draft("message", "The listing gives the size as 3 by 4 inches."),
@@ -189,7 +179,7 @@ describe("approving in a demo copy", () => {
     const escalated = await play("demo-nad-42");
     expect(escalated).toMatchObject({ stage: "claim", status: "needs_you" });
     expect(Date.parse(escalated.dueAt!) - clock.now).toBeGreaterThan(9 * 24 * 3600 * SECOND);
-    expect((await store.listEvents(workspace.id, "demo-nad-42")).at(-1)?.kind).toBe("escalated");
+    expect((await store.listEvents(shop.id, "demo-nad-42")).at(-1)?.kind).toBe("escalated");
 
     clock.now += 60 * SECOND;
     const fought = await approve("demo-nad-42", {
@@ -206,7 +196,7 @@ describe("approving in a demo copy", () => {
   });
 
   it("turns a low offer on the broken mug into a claim", async () => {
-    const { clock, approve, play } = await demoCopy();
+    const { clock, approve, play } = await sampleCopy();
     await approve("demo-damaged-28", {
       move: "settle",
       draft: draft("offer", "Here's $5 for the trouble.", { offerAmount: 500 }),
@@ -216,7 +206,7 @@ describe("approving in a demo copy", () => {
   });
 
   it("refuses steps that can't happen, with plain reasons", async () => {
-    const { approve } = await demoCopy();
+    const { approve } = await sampleCopy();
     const offer = (amount: number) => ({
       move: "settle" as const,
       draft: draft("offer", "An offer", { offerAmount: amount }),
@@ -246,7 +236,7 @@ describe("approving in a demo copy", () => {
   });
 
   it("sends once when the seller taps approve twice", async () => {
-    const { approve, store, workspace } = await demoCopy();
+    const { approve, store, shop } = await sampleCopy();
     const request = { move: "fight" as const, draft: draft("message", "Tracking shows delivery.") };
     const results = await Promise.allSettled([
       approve("demo-inr-86", request),
@@ -254,9 +244,7 @@ describe("approving in a demo copy", () => {
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.find((r) => r.status === "rejected")).toMatchObject({ reason: { status: 409 } });
-    const sent = (await store.listEvents(workspace.id, "demo-inr-86")).filter(
-      (e) => e.kind === "sent",
-    );
+    const sent = (await store.listEvents(shop.id, "demo-inr-86")).filter((e) => e.kind === "sent");
     expect(sent).toHaveLength(1);
   });
 });
@@ -277,7 +265,7 @@ describe("which PayPal call a move makes", () => {
   });
 });
 
-// ---------- Live sandbox, with PayPal faked at the HTTP level ----------
+// ---------- A connected shop, with PayPal faked at the HTTP level ----------
 
 const config = { clientId: "id", clientSecret: "secret", base: "https://api-m.sandbox.paypal.com" };
 
@@ -341,31 +329,26 @@ function dispute(
   };
 }
 
+const LIVE = "sh_realshop00000001";
+
+/** A real shop connected to a sandbox app, holding one dispute (PP-D-9) on a seeded order. */
 async function liveCase(stage: Case["stage"], status: Case["status"]) {
   const store = new MemoryStore();
-  const workspace: Workspace = {
-    id: "live",
-    kind: "live",
-    shopName: "Wick & Ember",
-    createdAt: created,
-    expiresAt: null,
-    lastSweepAt: null,
-    seedVersion: null,
-  };
-  const seeded = await demoCopy();
+  const shop = testRealShop(undefined, { id: LIVE, orderHistory: "full" });
+  const seeded = await sampleCopy();
   const order = (await seeded.store.getOrder(
-    seeded.workspace.id,
-    (await seeded.store.getCase(seeded.workspace.id, "demo-inr-86"))!.orderId,
+    seeded.shop.id,
+    (await seeded.store.getCase(seeded.shop.id, "demo-inr-86"))!.orderId,
   ))!;
-  const kase = (await seeded.store.getCase(seeded.workspace.id, "demo-inr-86"))!;
-  await store.saveOrder("live", order);
-  await store.saveCase("live", { ...kase, id: "PP-D-9", paypalDisputeId: "PP-D-9", stage, status });
-  return { store, workspace, order };
+  const kase = (await seeded.store.getCase(seeded.shop.id, "demo-inr-86"))!;
+  await store.saveOrder(LIVE, order);
+  await store.saveCase(LIVE, { ...kase, id: "PP-D-9", paypalDisputeId: "PP-D-9", stage, status });
+  return { store, shop, order };
 }
 
-describe("approving in the live sandbox", () => {
+describe("approving in a connected shop", () => {
   it("sends a message on an inquiry", async () => {
-    const { store, workspace } = await liveCase("inquiry", "needs_you");
+    const { store, shop } = await liveCase("inquiry", "needs_you");
     const fake = fakePayPal(
       json(
         200,
@@ -379,7 +362,7 @@ describe("approving in the live sandbox", () => {
     );
     const result = await approveCase({
       store,
-      workspace,
+      shop,
       caseId: "PP-D-9",
       request: { move: "fight", draft: draft("message", "It was delivered.") },
       ...fake,
@@ -393,16 +376,15 @@ describe("approving in the live sandbox", () => {
       simulated: false,
       paypal: { endpoint: "POST /v1/customer/disputes/PP-D-9/send-message", status: 200 },
     });
-    expect(result.events.at(-1)).toMatchObject({
-      kind: "sent",
-      detail: "POST /v1/customer/disputes/PP-D-9/send-message",
-    });
+    // The call is in the result; the timeline only says it was sent.
+    expect(result.events.at(-1)).toMatchObject({ kind: "sent" });
+    expect(result.events.at(-1)?.detail).toBeUndefined();
     expect(result.events.at(-1)?.simulated).toBeUndefined();
     expect((result.case as StoredCase).pendingReaction).toBeUndefined();
   });
 
   it("makes a REFUND offer for the amount on an inquiry", async () => {
-    const { store, workspace } = await liveCase("inquiry", "needs_you");
+    const { store, shop } = await liveCase("inquiry", "needs_you");
     const fake = fakePayPal(
       json(
         200,
@@ -414,7 +396,7 @@ describe("approving in the live sandbox", () => {
     );
     await approveCase({
       store,
-      workspace,
+      shop,
       caseId: "PP-D-9",
       request: { move: "settle", draft: draft("offer", "Here's $10 back.", { offerAmount: 1000 }) },
       ...fake,
@@ -428,7 +410,7 @@ describe("approving in the live sandbox", () => {
   });
 
   it("provides proof of fulfillment with tracking and a PDF on a claim waiting for the seller", async () => {
-    const { store, workspace, order } = await liveCase("claim", "needs_you");
+    const { store, shop, order } = await liveCase("claim", "needs_you");
     const fake = fakePayPal(
       json(
         200,
@@ -438,7 +420,7 @@ describe("approving in the live sandbox", () => {
     );
     const result = await approveCase({
       store,
-      workspace,
+      shop,
       caseId: "PP-D-9",
       request: {
         move: "fight",
@@ -463,14 +445,14 @@ describe("approving in the live sandbox", () => {
   });
 
   it("adds supporting information to a claim PayPal is reviewing", async () => {
-    const { store, workspace } = await liveCase("claim", "with_paypal");
+    const { store, shop } = await liveCase("claim", "with_paypal");
     const fake = fakePayPal(
       json(200, dispute("CHARGEBACK", "UNDER_REVIEW", ["provide_supporting_info"])),
       json(200, {}),
     );
     await approveCase({
       store,
-      workspace,
+      shop,
       caseId: "PP-D-9",
       request: { move: "fight", draft: draft("message", "More detail.") },
       ...fake,
@@ -483,7 +465,7 @@ describe("approving in the live sandbox", () => {
   });
 
   it("accepts the claim with a REFUND and closes the case", async () => {
-    const { store, workspace } = await liveCase("claim", "needs_you");
+    const { store, shop } = await liveCase("claim", "needs_you");
     const fake = fakePayPal(
       json(
         200,
@@ -495,7 +477,7 @@ describe("approving in the live sandbox", () => {
     );
     const result = await approveCase({
       store,
-      workspace,
+      shop,
       caseId: "PP-D-9",
       request: { move: "refund", draft: draft("refund", "Refunded in full.") },
       ...fake,
@@ -508,13 +490,13 @@ describe("approving in the live sandbox", () => {
   });
 
   it("says what PayPal allows when the dispute's links don't allow the move, and sends nothing", async () => {
-    const { store, workspace } = await liveCase("claim", "with_paypal");
+    const { store, shop } = await liveCase("claim", "with_paypal");
     const fake = fakePayPal(
       json(200, dispute("CHARGEBACK", "UNDER_REVIEW", ["provide_supporting_info"])),
     );
     const refused = approveCase({
       store,
-      workspace,
+      shop,
       caseId: "PP-D-9",
       request: { move: "refund", draft: draft("refund", "x") },
       ...fake,
@@ -525,11 +507,11 @@ describe("approving in the live sandbox", () => {
         "PayPal doesn't allow accepting the claim on this dispute right now. It allows adding supporting information.",
     });
     expect(fake.calls).toHaveLength(1);
-    expect((await store.getCase("live", "PP-D-9"))!.status).toBe("with_paypal");
+    expect((await store.getCase(LIVE, "PP-D-9"))!.status).toBe("with_paypal");
   });
 
   it("explains PayPal's refusal and leaves the case as it was", async () => {
-    const { store, workspace } = await liveCase("claim", "needs_you");
+    const { store, shop } = await liveCase("claim", "needs_you");
     const fake = fakePayPal(
       json(200, dispute("CHARGEBACK", "WAITING_FOR_SELLER_RESPONSE", ["provide_evidence"])),
       json(422, {
@@ -541,14 +523,14 @@ describe("approving in the live sandbox", () => {
     );
     const request = { move: "fight" as const, draft: draft("evidence", "Delivered.") };
     await expect(
-      approveCase({ store, workspace, caseId: "PP-D-9", request, ...fake }),
+      approveCase({ store, shop, caseId: "PP-D-9", request, ...fake }),
     ).rejects.toMatchObject({
       status: 409,
       message:
         "PayPal doesn't allow sending evidence in the dispute's current state. Refresh to see where it stands. PayPal debug ID f00d.",
     });
-    expect(await store.listEvents("live", "PP-D-9")).toEqual([]);
-    expect((await store.getCase("live", "PP-D-9"))!.status).toBe("needs_you");
+    expect(await store.listEvents(LIVE, "PP-D-9")).toEqual([]);
+    expect((await store.getCase(LIVE, "PP-D-9"))!.status).toBe("needs_you");
 
     // Nothing was sent, so trying again straight away is allowed.
     const retry = fakePayPal(
@@ -556,23 +538,23 @@ describe("approving in the live sandbox", () => {
       json(200, {}),
     );
     await expect(
-      approveCase({ store, workspace, caseId: "PP-D-9", request, ...retry }),
+      approveCase({ store, shop, caseId: "PP-D-9", request, ...retry }),
     ).resolves.toMatchObject({ simulated: false });
   });
 
   it("says so when PayPal can't be reached or isn't connected", async () => {
-    const { store, workspace } = await liveCase("inquiry", "needs_you");
+    const { store, shop } = await liveCase("inquiry", "needs_you");
     const request = { move: "fight" as const, draft: draft("message", "Hi") };
     const down = fakePayPal(new TypeError("fetch failed"));
     await expect(
-      approveCase({ store, workspace, caseId: "PP-D-9", request, ...down }),
+      approveCase({ store, shop, caseId: "PP-D-9", request, ...down }),
     ).rejects.toMatchObject({
       status: 502,
       message: expect.stringMatching(/Couldn't reach PayPal/),
     });
     await expect(
-      approveCase({ store, workspace, caseId: "PP-D-9", request, paypal: null }),
-    ).rejects.toMatchObject({ status: 503 });
+      approveCase({ store, shop, caseId: "PP-D-9", request, paypal: null }),
+    ).rejects.toMatchObject({ status: 409, code: "paypal_not_connected" });
   });
 
   it("only offers on inquiries, by PayPal's own links too", () => {

@@ -1,23 +1,24 @@
 import "server-only";
 
-import type { Analysis, Case, CaseEvent, Order, Workspace } from "@/lib/domain";
-import { isBulk, type BulkStore, type Versioned, type WorkspaceData } from "./bulk";
-import type { Store } from "./types";
+import type { ChatSummary, ChatThread } from "@/lib/chat-thread";
+import type { Analysis, AppNotification, Case, CaseEvent, Order, Shop, User } from "@/lib/domain";
+import { isBulk, type BulkStore, type ShopData, type Versioned } from "./bulk";
+import type { SealedSecret, SecretName, Store } from "./types";
 
 /**
  * A short-lived read cache in front of Firestore, inside this server process. A page asks for
- * cases, orders and metrics at once; each workspace's records are fetched once and shared, and
- * reads that arrive while a fetch is in flight wait for it instead of starting another. Any write
- * through this store drops that workspace's cached reads, so this process never serves stale data;
- * another server instance may, for at most the few seconds a read is kept.
+ * cases, orders and metrics at once; each shop's records are fetched once and shared, and reads
+ * that arrive while a fetch is in flight wait for it instead of starting another. Any write
+ * through this store drops that shop's cached reads, so this process never serves stale data;
+ * another server instance may, for at most the few seconds a read is kept. Accounts are kept
+ * only briefly, so "sign out everywhere" reaches every instance within seconds; secrets and the
+ * shop lists behind queries are never cached.
  */
 
 const DEFAULT_TTL_MS = 4_000;
-/**
- * Workspace records change rarely (a reset, a sweep's timestamp), and every request reads one
- * first, so they're kept longer. A reset made the same day leaves the seed the same anyway.
- */
-const WORKSPACE_TTL_MS = 30_000;
+/** Every request reads its shop and its account first. */
+const SHOP_TTL_MS = 10_000;
+const USER_TTL_MS = 3_000;
 /** Past this many entries, expired ones are swept out, so memory stays bounded by recent traffic. */
 const SWEEP_AT = 200;
 
@@ -39,12 +40,14 @@ export class CachedStore implements Store, BulkStore, Versioned {
     this.kind = inner.kind;
   }
 
-  version(workspaceId: string): number {
-    return this.versions.get(workspaceId) ?? 0;
+  version(shopId: string): number {
+    return this.versions.get(shopId) ?? 0;
   }
 
   private ttlFor(key: string): number {
-    return key.endsWith("|workspace") ? Math.max(this.ttlMs, WORKSPACE_TTL_MS) : this.ttlMs;
+    if (key.endsWith("|shop")) return Math.max(this.ttlMs, SHOP_TTL_MS);
+    if (key.startsWith("user|")) return Math.min(this.ttlMs, USER_TTL_MS);
+    return this.ttlMs;
   }
 
   /** The cached value for a key, or a fresh read that later callers share. Callers get copies. */
@@ -74,115 +77,167 @@ export class CachedStore implements Store, BulkStore, Versioned {
     return hit && this.now() - hit.at < this.ttlMs ? (hit.value as Promise<T>) : null;
   }
 
-  /** Drops a workspace's cached reads, before a write and again after it lands. */
-  private forget(workspaceId: string): void {
-    const prefix = `${workspaceId}|`;
+  /** Drops a shop's cached reads, before a write and again after it lands. */
+  private forget(shopId: string): void {
+    const prefix = `${shopId}|`;
     for (const key of this.entries.keys()) if (key.startsWith(prefix)) this.entries.delete(key);
-    this.versions.set(workspaceId, this.version(workspaceId) + 1);
+    this.versions.set(shopId, this.version(shopId) + 1);
   }
 
-  private async write(workspaceId: string, work: () => Promise<void>): Promise<void> {
-    this.forget(workspaceId);
+  private async write(shopId: string, work: () => Promise<void>): Promise<void> {
+    this.forget(shopId);
     try {
       await work();
     } finally {
-      this.forget(workspaceId);
+      this.forget(shopId);
     }
   }
 
-  getWorkspace(id: string): Promise<Workspace | null> {
-    return this.read(`${id}|workspace`, () => this.inner.getWorkspace(id));
+  getUser(uid: string): Promise<User | null> {
+    return this.read(`user|${uid}`, () => this.inner.getUser(uid));
   }
 
-  saveWorkspace(workspace: Workspace): Promise<void> {
-    return this.write(workspace.id, () => this.inner.saveWorkspace(workspace));
+  async saveUser(user: User): Promise<void> {
+    this.entries.delete(`user|${user.uid}`);
+    try {
+      await this.inner.saveUser(user);
+    } finally {
+      this.entries.delete(`user|${user.uid}`);
+    }
   }
 
-  clearWorkspace(id: string): Promise<void> {
-    return this.write(id, () => this.inner.clearWorkspace(id));
+  getShop(id: string): Promise<Shop | null> {
+    return this.read(`${id}|shop`, () => this.inner.getShop(id));
   }
 
-  listOrders(workspaceId: string): Promise<Order[]> {
-    return this.read(`${workspaceId}|orders`, () => this.inner.listOrders(workspaceId));
+  saveShop(shop: Shop): Promise<void> {
+    return this.write(shop.id, () => this.inner.saveShop(shop));
+  }
+
+  listShopsFor(uid: string): Promise<Shop[]> {
+    return this.inner.listShopsFor(uid);
+  }
+
+  listConnectedShops(): Promise<Shop[]> {
+    return this.inner.listConnectedShops();
+  }
+
+  listShopsByPayPalApp(clientIdHash: string): Promise<Shop[]> {
+    return this.inner.listShopsByPayPalApp(clientIdHash);
+  }
+
+  deleteShop(id: string): Promise<void> {
+    return this.write(id, () => this.inner.deleteShop(id));
+  }
+
+  clearShop(id: string): Promise<void> {
+    return this.write(id, () => this.inner.clearShop(id));
+  }
+
+  getSecret(shopId: string, name: SecretName): Promise<SealedSecret | null> {
+    return this.inner.getSecret(shopId, name);
+  }
+
+  saveSecret(shopId: string, name: SecretName, secret: SealedSecret): Promise<void> {
+    return this.inner.saveSecret(shopId, name, secret);
+  }
+
+  deleteSecret(shopId: string, name: SecretName): Promise<void> {
+    return this.inner.deleteSecret(shopId, name);
+  }
+
+  listOrders(shopId: string): Promise<Order[]> {
+    return this.read(`${shopId}|orders`, () => this.inner.listOrders(shopId));
   }
 
   /** From the cached list when there is one; otherwise a single read. */
-  async getOrder(workspaceId: string, orderId: string): Promise<Order | null> {
-    const list = this.peek<Order[]>(`${workspaceId}|orders`);
+  async getOrder(shopId: string, orderId: string): Promise<Order | null> {
+    const list = this.peek<Order[]>(`${shopId}|orders`);
     if (list) return copy((await list).find((o) => o.id === orderId) ?? null);
-    return this.read(`${workspaceId}|order:${orderId}`, () =>
-      this.inner.getOrder(workspaceId, orderId),
-    );
+    return this.read(`${shopId}|order:${orderId}`, () => this.inner.getOrder(shopId, orderId));
   }
 
-  saveOrder(workspaceId: string, order: Order): Promise<void> {
-    return this.write(workspaceId, () => this.inner.saveOrder(workspaceId, order));
+  saveOrder(shopId: string, order: Order): Promise<void> {
+    return this.write(shopId, () => this.inner.saveOrder(shopId, order));
   }
 
-  listCases(workspaceId: string): Promise<Case[]> {
-    return this.read(`${workspaceId}|cases`, () => this.inner.listCases(workspaceId));
+  listCases(shopId: string): Promise<Case[]> {
+    return this.read(`${shopId}|cases`, () => this.inner.listCases(shopId));
   }
 
-  async getCase(workspaceId: string, caseId: string): Promise<Case | null> {
-    const list = this.peek<Case[]>(`${workspaceId}|cases`);
+  async getCase(shopId: string, caseId: string): Promise<Case | null> {
+    const list = this.peek<Case[]>(`${shopId}|cases`);
     if (list) return copy((await list).find((c) => c.id === caseId) ?? null);
-    return this.read(`${workspaceId}|case:${caseId}`, () =>
-      this.inner.getCase(workspaceId, caseId),
-    );
+    return this.read(`${shopId}|case:${caseId}`, () => this.inner.getCase(shopId, caseId));
   }
 
-  saveCase(workspaceId: string, kase: Case): Promise<void> {
-    return this.write(workspaceId, () => this.inner.saveCase(workspaceId, kase));
+  saveCase(shopId: string, kase: Case): Promise<void> {
+    return this.write(shopId, () => this.inner.saveCase(shopId, kase));
   }
 
-  listEvents(workspaceId: string, caseId: string): Promise<CaseEvent[]> {
-    return this.read(`${workspaceId}|events:${caseId}`, () =>
-      this.inner.listEvents(workspaceId, caseId),
-    );
+  listEvents(shopId: string, caseId: string): Promise<CaseEvent[]> {
+    return this.read(`${shopId}|events:${caseId}`, () => this.inner.listEvents(shopId, caseId));
   }
 
-  addEvent(workspaceId: string, caseId: string, event: CaseEvent): Promise<void> {
-    return this.write(workspaceId, () => this.inner.addEvent(workspaceId, caseId, event));
+  addEvent(shopId: string, caseId: string, event: CaseEvent): Promise<void> {
+    return this.write(shopId, () => this.inner.addEvent(shopId, caseId, event));
   }
 
-  async getAnalysis(workspaceId: string, caseId: string): Promise<Analysis | null> {
-    const list = this.peek<Analysis[]>(`${workspaceId}|analyses`);
+  async getAnalysis(shopId: string, caseId: string): Promise<Analysis | null> {
+    const list = this.peek<Analysis[]>(`${shopId}|analyses`);
     if (list) return copy((await list).find((a) => a.caseId === caseId) ?? null);
-    return this.read(`${workspaceId}|analysis:${caseId}`, () =>
-      this.inner.getAnalysis(workspaceId, caseId),
-    );
+    return this.read(`${shopId}|analysis:${caseId}`, () => this.inner.getAnalysis(shopId, caseId));
   }
 
-  saveAnalysis(workspaceId: string, analysis: Analysis): Promise<void> {
-    return this.write(workspaceId, () => this.inner.saveAnalysis(workspaceId, analysis));
+  saveAnalysis(shopId: string, analysis: Analysis): Promise<void> {
+    return this.write(shopId, () => this.inner.saveAnalysis(shopId, analysis));
   }
 
-  listAnalyses(workspaceId: string): Promise<Analysis[]> {
-    return this.read(`${workspaceId}|analyses`, async () => {
-      if (isBulk(this.inner)) return this.inner.listAnalyses(workspaceId);
-      const cases = await this.inner.listCases(workspaceId);
-      const found = await Promise.all(cases.map((c) => this.inner.getAnalysis(workspaceId, c.id)));
+  listAnalyses(shopId: string): Promise<Analysis[]> {
+    return this.read(`${shopId}|analyses`, async () => {
+      if (isBulk(this.inner)) return this.inner.listAnalyses(shopId);
+      const cases = await this.inner.listCases(shopId);
+      const found = await Promise.all(cases.map((c) => this.inner.getAnalysis(shopId, c.id)));
       return found.filter((a): a is Analysis => a !== null);
     });
   }
 
-  replaceWorkspace(data: WorkspaceData, fresh: boolean): Promise<void> {
-    return this.write(data.workspace.id, async () => {
-      if (!isBulk(this.inner)) throw new Error("This store can't replace a workspace");
-      await this.inner.replaceWorkspace(data, fresh);
+  listNotifications(shopId: string, limit: number): Promise<AppNotification[]> {
+    return this.read(`${shopId}|notifications:${limit}`, () =>
+      this.inner.listNotifications(shopId, limit),
+    );
+  }
+
+  saveNotification(shopId: string, notification: AppNotification): Promise<void> {
+    return this.write(shopId, () => this.inner.saveNotification(shopId, notification));
+  }
+
+  // Chats are one person's own and read one at a time, so they're never cached.
+  listChats(shopId: string, uid: string, limit: number): Promise<ChatSummary[]> {
+    return this.inner.listChats(shopId, uid, limit);
+  }
+
+  getChat(shopId: string, uid: string, chatId: string): Promise<ChatThread | null> {
+    return this.inner.getChat(shopId, uid, chatId);
+  }
+
+  saveChat(shopId: string, chat: ChatThread): Promise<void> {
+    return this.inner.saveChat(shopId, chat);
+  }
+
+  deleteChat(shopId: string, uid: string, chatId: string): Promise<void> {
+    return this.inner.deleteChat(shopId, uid, chatId);
+  }
+
+  clearChats(shopId: string): Promise<void> {
+    return this.inner.clearChats(shopId);
+  }
+
+  replaceShop(data: ShopData, fresh: boolean): Promise<void> {
+    return this.write(data.shop.id, async () => {
+      if (!isBulk(this.inner)) throw new Error("This store can't replace a shop");
+      await this.inner.replaceShop(data, fresh);
       for (const entry of data.cache ?? []) this.entries.delete(`cache|${entry.key}`);
-    });
-  }
-
-  expiredWorkspaces(now: Date, limit: number): Promise<string[]> {
-    return isBulk(this.inner) ? this.inner.expiredWorkspaces(now, limit) : Promise.resolve([]);
-  }
-
-  deleteWorkspace(id: string, cacheKeys: string[] = []): Promise<void> {
-    return this.write(id, async () => {
-      if (isBulk(this.inner)) await this.inner.deleteWorkspace(id, cacheKeys);
-      else await this.inner.clearWorkspace(id);
-      for (const key of cacheKeys) this.entries.delete(`cache|${key}`);
     });
   }
 

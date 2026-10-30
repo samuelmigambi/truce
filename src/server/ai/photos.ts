@@ -9,8 +9,9 @@ const MAX_BYTES = 4 * 1024 * 1024;
 const PUBLIC_PHOTO = /^\/demo\/photos\/[a-z0-9][a-z0-9-]*\.(png|jpe?g)$/i;
 
 /**
- * Case photos as data URLs for the vision model. Demo photos are files under public/, read from
- * disk; only paths that look like one are read, so a case can't point the server at another file.
+ * Case photos as data URLs for the vision model. The sample shop's photos are files under
+ * public/demo/photos, read from disk; only paths that look like one are read, so a case can't
+ * point the server at another file.
  */
 export function publicPhotoReader(root: string = join(process.cwd(), "public")): PhotoReader {
   return async (url) => {
@@ -18,7 +19,9 @@ export function publicPhotoReader(root: string = join(process.cwd(), "public")):
       return url.length <= MAX_BYTES * 1.4 ? url : null;
     const match = PUBLIC_PHOTO.exec(url);
     if (!match) return null;
-    const bytes = await readFile(join(root, ...url.split("/").filter(Boolean))).catch(() => null);
+    // public/ ships beside the server (see the Dockerfile), so the bundler needn't trace it.
+    const file = join(/*turbopackIgnore: true*/ root, ...url.split("/").filter(Boolean));
+    const bytes = await readFile(file).catch(() => null);
     if (!bytes || bytes.length === 0 || bytes.length > MAX_BYTES) return null;
     const type = match[1]!.toLowerCase() === "png" ? "image/png" : "image/jpeg";
     return `data:${type};base64,${bytes.toString("base64")}`;

@@ -1,23 +1,36 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Check, CircleCheck, MessagesSquare, RotateCcw, Send, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  CircleCheck,
+  Hourglass,
+  PlugZap,
+  RotateCcw,
+  Send,
+  TriangleAlert,
+} from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import type { Analysis, Case, CaseEvent, Draft, Move, Workspace } from "@/lib/domain";
+import type { ApproveResponse } from "@/lib/api-types";
+import type { Analysis, Case, CaseEvent, Draft, Move } from "@/lib/domain";
+import type { Cents } from "@/lib/money";
 import { approveCase } from "@/lib/client/actions";
-import { errorMessage } from "@/lib/client/api";
-import { openAsk } from "@/lib/client/ask";
-import { formatDateTime } from "@/lib/client/format";
-import { headlineWithoutMove, MOVE } from "@/lib/client/labels";
-import { useNow } from "@/lib/client/now";
-import { formatUsd } from "@/lib/money";
+import { errorMessage, shopHref } from "@/lib/client/api";
+import { headlineWithoutMove, MOVE, reviewAction, sendBlocker } from "@/lib/client/labels";
+import { useMoney, useShop, useShopDates } from "@/lib/client/shop-context";
 import { duration, ease, spring } from "../../motion";
+import { Button, IconButton } from "../../ui/button";
 import { Chip } from "../../ui/chip";
 import { cn } from "../../ui/cn";
 import { useToast } from "../../ui/toast";
 import { MoveChip } from "../case-chips";
-import { CostBars } from "./cost-bars";
+import { CostTable } from "./cost-table";
 import { EvidenceChip, EvidenceChips } from "./evidence";
+
+type Format = (cents: Cents) => string;
+type ReviewAction = ReturnType<typeof reviewAction>;
 
 const firstName = (name: string) => name.split(/\s+/)[0] ?? name;
 
@@ -27,13 +40,13 @@ function evidenceTypeLabel(type: string | undefined): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-function draftTitle(draft: Draft, kase: Case): string {
+function draftTitle(draft: Draft, kase: Case, money: Format): string {
   const who = firstName(kase.buyer.name);
   switch (draft.kind) {
     case "message":
       return `Message to ${who}`;
     case "offer":
-      return `Offer to ${who}${draft.offerAmount !== undefined ? `: ${formatUsd(draft.offerAmount)} back` : ""}`;
+      return `Offer to ${who}${draft.offerAmount !== undefined ? `: ${money(draft.offerAmount)} back` : ""}`;
     case "evidence":
       return `For PayPal: ${evidenceTypeLabel(draft.evidenceType).toLowerCase()}`;
     case "refund":
@@ -41,18 +54,19 @@ function draftTitle(draft: Draft, kase: Case): string {
   }
 }
 
-function approveLabel(draft: Draft, kase: Case): string {
+function approveLabel(draft: Draft, kase: Case, money: Format, review: ReviewAction): string {
+  if (review === "provide_supporting_info") return "Send to PayPal";
   switch (draft.kind) {
     case "message":
       return "Approve and send message";
     case "offer":
       return draft.offerAmount !== undefined
-        ? `Approve and send ${formatUsd(draft.offerAmount)} offer`
+        ? `Approve and send ${money(draft.offerAmount)} offer`
         : "Approve and send offer";
     case "evidence":
       return "Approve and send evidence";
     case "refund":
-      return `Approve ${formatUsd(kase.amount)} refund`;
+      return `Approve ${money(kase.amount)} refund`;
   }
 }
 
@@ -71,20 +85,27 @@ export function RecommendationPanel({
   kase,
   analysis,
   events,
-  workspace,
+  onRunAgain,
 }: {
   kase: Case;
   analysis: Analysis;
   events: CaseEvent[];
-  workspace: Workspace;
+  /** Reads the case again from the start, while it still needs the seller. */
+  onRunAgain?: () => void;
 }) {
+  const shop = useShop();
+  const money = useMoney();
   const rec = analysis.recommendation;
   const [text, setText] = useState(analysis.draft.text);
   const [base, setBase] = useState(analysis.draft.text);
   const [phase, setPhase] = useState<"idle" | "sending" | "sent">("idle");
   const [noteReady, setNoteReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [answer, setAnswer] = useState<ApproveResponse["paypal"]>(null);
   const toast = useToast();
+  const blocked = sendBlocker(shop);
+  // A real claim PayPal is reviewing can still take supporting information (or a refund).
+  const review = reviewAction(shop, kase, rec.move);
 
   // Let the approve button finish its check before the panel moves on.
   useEffect(() => {
@@ -102,23 +123,31 @@ export function RecommendationPanel({
   const approvedEvent = [...events]
     .reverse()
     .find((e) => e.kind === "approved" || e.kind === "sent");
-  const decided = phase === "idle" ? kase.status !== "needs_you" : phase === "sent" && noteReady;
-  const locked = phase !== "idle" || kase.status !== "needs_you";
+  // Already sent since this analysis: the reviewer has it, so it isn't offered twice.
+  const sentSince = approvedEvent !== undefined && approvedEvent.at >= analysis.createdAt;
+  const open = kase.status === "needs_you" || (review !== null && !sentSince);
+  const decided = phase === "idle" ? !open : phase === "sent" && noteReady;
+  const locked = phase !== "idle" || !open;
   const edited = text.trim() !== analysis.draft.text.trim();
 
   async function approve() {
+    if (blocked) return;
     setPhase("sending");
     setError(null);
     try {
-      const response = await approveCase(kase, rec.move, { ...analysis.draft, text: text.trim() });
+      const response = await approveCase(shop.id, kase, rec.move, {
+        ...analysis.draft,
+        text: text.trim(),
+      });
       setPhase("sent");
+      setAnswer(response.paypal);
       toast({
         title: rec.move === "refund" ? "Refund approved" : "Approved and sent",
         description: response.simulated
-          ? "Simulated in this demo copy, and recorded on the case."
+          ? "Simulated in this sample shop, and recorded on the case."
           : response.paypal
-            ? `PayPal answered ${response.paypal.status}.`
-            : undefined,
+            ? "PayPal received it, and it's recorded on the case."
+            : "Sent to PayPal, and recorded on the case.",
       });
     } catch (e) {
       setPhase("idle");
@@ -130,21 +159,34 @@ export function RecommendationPanel({
     <div className="space-y-4">
       {/* The call */}
       <section className="rounded-card border-line bg-paper overflow-hidden border">
-        <div className="px-5 pt-5 pb-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-ink-2 text-[13px]">Truce recommends</span>
-            <MoveChip move={rec.move} />
-            {rec.move === "settle" && rec.offerAmount !== undefined && (
-              <Chip tone="mist">Offer {formatUsd(rec.offerAmount)}</Chip>
+        <div className="p-5">
+          {/* On a narrow screen the chips wrap; the run-again button keeps its place on the right. */}
+          <div className="flex items-start gap-2">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <MoveChip move={rec.move} />
+              {rec.move === "settle" && rec.offerAmount !== undefined && (
+                <Chip tone="mist">Offer {money(rec.offerAmount)}</Chip>
+              )}
+              <Chip tone="outline" className="ml-auto">
+                {rec.confidence.charAt(0).toUpperCase() + rec.confidence.slice(1)} confidence
+              </Chip>
+            </div>
+            {onRunAgain && (
+              <IconButton
+                label="Run the analysis again"
+                size="sm"
+                onClick={onRunAgain}
+                className="-my-1 -mr-1.5"
+              >
+                <RotateCcw />
+              </IconButton>
             )}
-            <span className="text-ink-2 ml-auto text-xs">
-              {rec.confidence.charAt(0).toUpperCase() + rec.confidence.slice(1)} confidence
-            </span>
           </div>
-          <h2 className="text-ink mt-3 text-[19px] leading-snug font-semibold tracking-[-0.01em] text-pretty">
+          <h2 className="text-ink mt-4 text-[20px] leading-snug font-semibold tracking-[-0.015em] text-pretty">
+            <span className="sr-only">Truce recommends: {MOVE[rec.move].toLowerCase()}. </span>
             {headlineWithoutMove(rec.headline)}
           </h2>
-          <ol className="mt-4 space-y-2.5">
+          <ol className="mt-4 space-y-3">
             {rec.reasons.map((reason, i) => (
               <motion.li
                 key={i}
@@ -164,52 +206,36 @@ export function RecommendationPanel({
             ))}
           </ol>
         </div>
-        <div className="border-line-soft border-t px-5 pt-4 pb-4">
-          <CostBars options={analysis.options} recommended={rec.move} />
+        <div className="border-line-soft border-t px-5 pt-4 pb-5">
+          <CostTable options={analysis.options} recommended={rec.move} />
         </div>
       </section>
 
       {/* The draft, the check, and approve */}
       <section className="rounded-card border-line bg-paper overflow-hidden border">
-        <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-4">
-          <h3 className="text-ink text-[15px] font-semibold">{draftTitle(analysis.draft, kase)}</h3>
-          <div className="flex items-center gap-2">
-            {edited && !locked && (
-              <button
-                type="button"
-                onClick={() => setText(analysis.draft.text)}
-                className="text-ink-2 hover:text-ink inline-flex items-center gap-1 text-xs font-medium transition-colors"
-              >
-                <RotateCcw className="size-3" />
-                Undo edits
-              </button>
-            )}
-            <Chip tone={edited ? "warn" : "neutral"} size="sm">
-              {phase === "sending"
-                ? "Sending"
-                : locked
-                  ? approvedEvent || phase === "sent"
-                    ? "Sent as approved"
-                    : "Read only"
-                  : edited
-                    ? "Edited by you"
-                    : "Truce's draft"}
-            </Chip>
-          </div>
+        <div className="flex min-h-8 items-center justify-between gap-3 px-5 pt-4">
+          <h3 className="text-ink text-[15px] font-semibold">
+            {draftTitle(analysis.draft, kase, money)}
+          </h3>
+          {edited && !locked && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setText(analysis.draft.text)}
+              className="-my-1 -mr-2"
+            >
+              Undo edits
+            </Button>
+          )}
         </div>
         <div className="px-5 pt-3">
           <DraftEditor value={text} onChange={setText} readOnly={locked} />
-          {analysis.draft.evidenceIds.length > 0 && (
-            <p className="text-ink-2 mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-              Cites <EvidenceChips ids={analysis.draft.evidenceIds} />
-            </p>
-          )}
         </div>
-        <div className="px-5 pt-4">
+        <div className="px-5 pt-3">
           <VerificationView analysis={analysis} edited={edited} />
         </div>
 
-        <div className="border-line-soft bg-cream/50 mt-4 border-t px-5 py-4">
+        <div className="border-line-soft bg-cream/50 mt-5 border-t px-5 py-4">
           <AnimatePresence mode="wait" initial={false}>
             {decided ? (
               <ApprovedNote
@@ -217,23 +243,51 @@ export function RecommendationPanel({
                 kase={kase}
                 move={rec.move}
                 event={approvedEvent ?? null}
-                workspace={workspace}
+                approvedHere={phase === "sent"}
+                answer={answer}
               />
             ) : (
               <motion.div
                 key="approve"
                 exit={{ opacity: 0, transition: { duration: duration.fast } }}
               >
+                {review && kase.status === "with_paypal" && (
+                  <p className="border-line bg-paper text-ink mb-3 flex items-start gap-2.5 rounded-[10px] border px-3.5 py-3 text-[13.5px] leading-relaxed">
+                    <Hourglass className="text-ink-2 mt-[3px] size-3.5 shrink-0" aria-hidden />
+                    <span>
+                      PayPal is reviewing this claim.{" "}
+                      {review === "accept_claim"
+                        ? `You can still accept it, which refunds ${firstName(kase.buyer.name)} in full and closes the case.`
+                        : review === "provide_evidence"
+                          ? "You can still send this to the reviewer as evidence."
+                          : "You can still send this to the reviewer as supporting information."}
+                    </span>
+                  </p>
+                )}
                 <ApproveButton
-                  label={approveLabel(analysis.draft, kase)}
+                  label={approveLabel(analysis.draft, kase, money, review)}
                   phase={phase}
                   onApprove={approve}
+                  disabled={blocked !== null}
                 />
-                <p className="text-ink-2 mt-2.5 text-center text-xs leading-relaxed">
-                  {workspace.kind === "demo"
-                    ? "Simulated in this demo copy: recorded on the case, not sent to PayPal."
-                    : "Sends to PayPal now, exactly as written above."}
-                </p>
+                {blocked ? (
+                  <p className="border-warn-200 bg-warn-50 text-warn-700 mt-3 flex items-start gap-2 rounded-[10px] border px-3 py-2.5 text-[13px] leading-relaxed">
+                    <PlugZap className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <span>
+                      {blocked}{" "}
+                      <Link
+                        href={shopHref(shop.id, "settings#paypal")}
+                        className="font-medium underline underline-offset-4"
+                      >
+                        Open settings
+                      </Link>
+                    </span>
+                  </p>
+                ) : shop.kind === "sample" ? (
+                  <p className="text-ink-2 mt-3 text-center text-[13px] leading-relaxed">
+                    Sample shop: recorded on the case, not sent to PayPal.
+                  </p>
+                ) : null}
                 {error && (
                   <p
                     role="alert"
@@ -242,18 +296,6 @@ export function RecommendationPanel({
                     {error}
                   </p>
                 )}
-                <button
-                  type="button"
-                  onClick={() =>
-                    openAsk(
-                      `For this case, what would happen if I chose a different move than ${MOVE[rec.move].toLowerCase()}?`,
-                    )
-                  }
-                  className="text-moss hover:text-moss-deep mx-auto mt-3 flex items-center gap-1.5 text-xs font-medium transition-colors"
-                >
-                  <MessagesSquare className="size-3.5" />
-                  Ask Truce about another move
-                </button>
               </motion.div>
             )}
           </AnimatePresence>
@@ -273,11 +315,23 @@ function DraftEditor({
   readOnly: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  // The box grows with the draft, and again when the screen's width changes (a phone turning).
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight + 2}px`;
+    const fit = () => {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight + 2}px`;
+    };
+    fit();
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      fit();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [value]);
   return (
     <>
@@ -302,38 +356,53 @@ function DraftEditor({
   );
 }
 
+function verdict(ok: boolean, flagged: number): string {
+  if (ok) return "Every sentence matches the evidence";
+  if (flagged === 0) return "Some sentences need a look";
+  return `${flagged} ${flagged === 1 ? "sentence needs" : "sentences need"} a look`;
+}
+
 function VerificationView({ analysis, edited }: { analysis: Analysis; edited: boolean }) {
   const v = analysis.verification;
-  const supported = v.checked.filter((c) => c.supported).length;
+  const flagged = v.checked.filter((c) => !c.supported).length;
   const [open, setOpen] = useState(!v.ok);
   return (
     <div
       className={cn(
         "rounded-[10px] border",
-        v.ok ? "bg-mist/60 border-[#e3eab8]" : "border-warn-200 bg-warn-50",
+        v.ok ? "bg-mist/60 border-mist-line" : "border-warn-200 bg-warn-50",
       )}
     >
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left"
+        className="flex w-full items-start gap-2.5 px-3.5 py-3 text-left"
       >
-        <span className="flex items-center gap-2.5">
-          {v.ok ? (
-            <span className="bg-lemon flex size-5 items-center justify-center rounded-full">
-              <Check className="text-ink size-3" strokeWidth={3} />
-            </span>
-          ) : (
-            <TriangleAlert className="text-warn-700 size-4" />
-          )}
-          <span className="text-ink text-[13px] font-medium">
-            {v.ok ? "Every sentence checked against the evidence" : "Some sentences need a look"}
+        {v.ok ? (
+          <span className="bg-lemon mt-px flex size-5 shrink-0 items-center justify-center rounded-full">
+            <Check className="text-ink size-3" strokeWidth={3} />
           </span>
+        ) : (
+          <TriangleAlert className="text-warn-700 mt-0.5 size-4 shrink-0" />
+        )}
+        <span className="min-w-0 flex-1">
+          <span className="text-ink block text-[13.5px] leading-5 font-medium">
+            {verdict(v.ok, flagged)}
+          </span>
+          {edited && (
+            <span className="text-ink-2 mt-0.5 block text-[13px] leading-5">
+              Checked before your edits. Yours go exactly as you wrote them.
+            </span>
+          )}
         </span>
-        <span className="text-ink-2 text-xs tabular-nums">
-          {supported} of {v.checked.length} supported
-        </span>
+        <ChevronDown
+          aria-hidden
+          className={cn(
+            "text-ink-2 mt-0.5 size-4 shrink-0 transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
       </button>
       <AnimatePresence initial={false}>
         {open && (
@@ -359,19 +428,13 @@ function VerificationView({ analysis, edited }: { analysis: Analysis; edited: bo
               ))}
             </ol>
             {v.notes && (
-              <p className="border-line-soft text-ink-2 border-t px-3.5 py-2.5 text-xs">
+              <p className="border-line-soft text-ink-2 border-t px-3.5 py-2.5 text-[13px] leading-relaxed">
                 {v.notes}
               </p>
             )}
           </motion.div>
         )}
       </AnimatePresence>
-      {edited && (
-        <p className="border-line-soft text-ink-2 border-t px-3.5 py-2 text-xs">
-          You&rsquo;ve edited the draft. Truce checked its own version; your changes go exactly as
-          you wrote them.
-        </p>
-      )}
     </div>
   );
 }
@@ -381,24 +444,26 @@ function ApproveButton({
   label,
   phase,
   onApprove,
+  disabled = false,
 }: {
   label: string;
   phase: "idle" | "sending" | "sent";
   onApprove: () => void;
+  /** Nothing can be sent right now (PayPal isn't connected). */
+  disabled?: boolean;
 }) {
   const sent = phase === "sent";
   return (
     <motion.button
       type="button"
       onClick={onApprove}
-      disabled={phase !== "idle"}
-      whileTap={{ scale: 0.98 }}
-      animate={{
-        backgroundColor: sent ? "#DDEB94" : "#1E2614",
-        color: sent ? "#1E2614" : "#FAFBF3",
-      }}
-      transition={{ duration: duration.slow, ease: ease.out }}
-      className="rounded-btn relative flex h-11 w-full items-center justify-center gap-2 overflow-hidden text-[15px] font-medium disabled:cursor-default"
+      disabled={phase !== "idle" || disabled}
+      whileTap={disabled ? undefined : { scale: 0.98 }}
+      className={cn(
+        "rounded-btn relative flex h-11 w-full items-center justify-center gap-2 overflow-hidden text-[15px] font-medium transition-colors duration-300 disabled:cursor-default",
+        sent ? "bg-lemon text-on-lemon" : "bg-ink text-cream",
+        disabled && phase === "idle" && "opacity-45",
+      )}
     >
       <AnimatePresence mode="popLayout" initial={false}>
         {phase === "idle" && (
@@ -428,13 +493,13 @@ function ApproveButton({
           >
             <span className="relative flex size-6 items-center justify-center">
               <motion.span
-                className="bg-ink absolute inset-0 rounded-full"
+                className="bg-forest absolute inset-0 rounded-full"
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
                 transition={spring.pop}
               />
               <motion.span
-                className="border-ink absolute inset-0 rounded-full border-2"
+                className="border-forest absolute inset-0 rounded-full border-2"
                 initial={{ scale: 1, opacity: 0.5 }}
                 animate={{ scale: 2.4, opacity: 0 }}
                 transition={{ duration: 0.7, ease: ease.out, delay: 0.1 }}
@@ -461,49 +526,106 @@ function ApproveButton({
   );
 }
 
+/** Where a case that doesn't need the seller stands, when nobody approved anything in Truce. */
+function waitingNote(kase: Case): { title: string; body: string } {
+  const who = firstName(kase.buyer.name);
+  if (kase.status === "closed") {
+    return { title: "This case is closed", body: "The timeline has the whole story." };
+  }
+  if (kase.status === "with_paypal") {
+    return {
+      title: "PayPal is reviewing this claim",
+      body: "There's nothing to send right now. Truce shows PayPal's decision here as soon as it lands.",
+    };
+  }
+  return {
+    title: `Waiting on ${who}`,
+    body: `There's nothing to send right now. Truce tells you as soon as ${who} replies.`,
+  };
+}
+
 function ApprovedNote({
   kase,
   move,
   event,
-  workspace,
+  approvedHere,
+  answer,
 }: {
   kase: Case;
   move: Move;
+  /** The approval on the case's record, if there is one. */
   event: CaseEvent | null;
-  workspace: Workspace;
+  /** The seller approved on this screen just now. */
+  approvedHere: boolean;
+  /** What PayPal said, when this screen made the call. */
+  answer: ApproveResponse["paypal"];
 }) {
-  const now = useNow();
-  const simulated = event?.simulated ?? workspace.kind === "demo";
+  const shop = useShop();
+  const dates = useShopDates();
+  const approved = approvedHere || event !== null;
+  const simulated = approved && (event?.simulated ?? shop.kind === "sample");
+  const waiting = approved ? null : waitingNote(kase);
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: duration.slow, ease: ease.out }}
       className="flex gap-3"
+      role="status"
     >
       <motion.span
         initial={{ scale: 0.5 }}
         animate={{ scale: 1 }}
         transition={spring.pop}
-        className="bg-lemon flex size-9 shrink-0 items-center justify-center rounded-full"
+        className={cn(
+          "flex size-9 shrink-0 items-center justify-center rounded-full",
+          waiting ? "bg-ink/[0.06] text-ink-2" : "bg-lemon text-ink",
+        )}
       >
-        <Check className="text-ink size-4" strokeWidth={2.75} />
+        {waiting ? (
+          kase.status === "closed" ? (
+            <Check className="size-4" strokeWidth={2.75} />
+          ) : (
+            <Hourglass className="size-4" />
+          )
+        ) : (
+          <Check className="size-4" strokeWidth={2.75} />
+        )}
       </motion.span>
       <div className="min-w-0">
         <p className="text-ink text-sm font-semibold">
-          {kase.status === "closed"
-            ? "Done. This case is closed."
-            : `You approved: ${MOVE[move].toLowerCase()}`}
+          {waiting
+            ? waiting.title
+            : kase.status === "closed"
+              ? "Done. This case is closed."
+              : `You approved: ${MOVE[move].toLowerCase()}`}
         </p>
         <p className="text-ink-2 mt-0.5 text-[13px] leading-relaxed">
-          {event ? `${formatDateTime(event.at, now)}. ` : ""}
-          {kase.status === "closed" ? "The timeline has the whole story." : whatHappens(move, kase)}
+          {waiting ? (
+            waiting.body
+          ) : (
+            <>
+              {event ? `${dates.dateTime(event.at)}. ` : ""}
+              {kase.status === "closed"
+                ? "The timeline has the whole story."
+                : whatHappens(move, kase)}
+            </>
+          )}
         </p>
-        {simulated && (
+        {simulated ? (
           <Chip tone="outline" size="sm" className="mt-2">
-            Simulated in this demo copy
+            Simulated in this sample shop
           </Chip>
-        )}
+        ) : answer ? (
+          <Chip
+            tone="moss"
+            size="sm"
+            className="mt-2"
+            title={`${answer.status} · ${answer.endpoint}`}
+          >
+            Received by PayPal
+          </Chip>
+        ) : null}
       </div>
     </motion.div>
   );

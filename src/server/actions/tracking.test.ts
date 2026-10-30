@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Order, Workspace } from "@/lib/domain";
+import type { Order } from "@/lib/domain";
 import { catchUpScans, loadPendingScans } from "@/server/demo/scans";
-import { seedDemo } from "@/server/demo/seed";
+import { testConnection, testRealShop, testSampleShop } from "@/server/testing/shops";
 import { PayPal } from "@/server/paypal/client";
 import { MemoryStore } from "@/server/store/memory";
 import { addTracking, normalizeTrackingNumber, sortOrders, withChecks } from "./tracking";
@@ -9,27 +9,19 @@ import { addTracking, normalizeTrackingNumber, sortOrders, withChecks } from "./
 const DAY = 24 * 60 * 60 * 1000;
 const created = "2026-10-28T15:20:00.000Z";
 
-async function demoCopy() {
+async function sampleCopy() {
   const clock = { now: Date.parse(created) };
   const store = new MemoryStore(() => clock.now);
-  const workspace = await seedDemo(store, {
-    id: "demo-tracking-tests-0001",
-    kind: "demo",
-    shopName: "Wick & Ember",
-    createdAt: created,
-    expiresAt: null,
-    lastSweepAt: null,
-    seedVersion: null,
-  });
-  return { store, workspace, clock };
+  const shop = await testSampleShop(store, created);
+  return { store, shop, clock };
 }
 
-describe("adding tracking in a demo copy", () => {
+describe("adding tracking in a sample shop", () => {
   it("simulates the upload, then the carrier's scans arrive over the next days", async () => {
-    const { store, workspace, clock } = await demoCopy();
+    const { store, shop, clock } = await sampleCopy();
     const result = await addTracking({
       store,
-      workspace,
+      shop,
       orderId: "W-1101",
       request: { carrier: "USPS", number: "9400 1118 9922 3346 1234 56" },
       now: new Date(clock.now),
@@ -48,59 +40,50 @@ describe("adding tracking in a demo copy", () => {
       detail: "Shipping Label Created, USPS Awaiting Item",
     });
     expect(result.order.checks.covered).toBe(true);
-    expect((await loadPendingScans(store, workspace.id))["W-1101"]!.length).toBeGreaterThan(4);
+    expect((await loadPendingScans(store, shop.id))["W-1101"]!.length).toBeGreaterThan(4);
 
     const later = clock.now + 4 * DAY;
     const [order] = await catchUpScans(
       store,
-      workspace,
-      [(await store.getOrder(workspace.id, "W-1101"))!],
+      shop,
+      [(await store.getOrder(shop.id, "W-1101"))!],
       later,
     );
     expect(order!.status).toBe("delivered");
     expect(order!.tracking!.deliveredAt).not.toBeNull();
     expect(order!.tracking!.events!.at(-1)!.location).toBe("EUGENE, OR 97405");
-    expect((await store.getOrder(workspace.id, "W-1101"))!.status).toBe("delivered");
-    expect((await loadPendingScans(store, workspace.id))["W-1101"]).toBeUndefined();
+    expect((await store.getOrder(shop.id, "W-1101"))!.status).toBe("delivered");
+    expect((await loadPendingScans(store, shop.id))["W-1101"]).toBeUndefined();
   });
 
   it("refuses orders it can't track", async () => {
-    const { store, workspace } = await demoCopy();
+    const { store, shop } = await sampleCopy();
     const request = { carrier: "USPS" as const, number: "9400111899223346123456" };
-    await expect(
-      addTracking({ store, workspace, orderId: "W-0001", request }),
-    ).rejects.toMatchObject({ status: 404 });
-    const shipped = (await store.listOrders(workspace.id)).find(
+    await expect(addTracking({ store, shop, orderId: "W-0001", request })).rejects.toMatchObject({
+      status: 404,
+    });
+    const shipped = (await store.listOrders(shop.id)).find(
       (o) => o.status === "delivered" && o.tracking?.uploaded,
     )!;
-    await expect(
-      addTracking({ store, workspace, orderId: shipped.id, request }),
-    ).rejects.toMatchObject({
+    await expect(addTracking({ store, shop, orderId: shipped.id, request })).rejects.toMatchObject({
       status: 409,
       message: expect.stringMatching(/already has tracking/),
     });
-    const refunded = (await store.listOrders(workspace.id)).find((o) => o.status === "refunded")!;
-    await expect(
-      addTracking({ store, workspace, orderId: refunded.id, request }),
-    ).rejects.toMatchObject({ status: 409 });
+    const refunded = (await store.listOrders(shop.id)).find((o) => o.status === "refunded")!;
+    await expect(addTracking({ store, shop, orderId: refunded.id, request })).rejects.toMatchObject(
+      { status: 409 },
+    );
   });
 });
 
-describe("adding tracking in the live sandbox", () => {
+describe("adding tracking in a connected shop", () => {
   const config = {
     clientId: "id",
     clientSecret: "secret",
     base: "https://api-m.sandbox.paypal.com",
   };
-  const live: Workspace = {
-    id: "live",
-    kind: "live",
-    shopName: "Wick & Ember",
-    createdAt: created,
-    expiresAt: null,
-    lastSweepAt: null,
-    seedVersion: null,
-  };
+  const live = testRealShop();
+  const LIVE = live.id;
   const order: Order = {
     id: "W-1045",
     paypalOrderId: "5O190127TN364715T",
@@ -144,7 +127,7 @@ describe("adding tracking in the live sandbox", () => {
 
   it("sends the tracking to PayPal's track API for the order's capture", async () => {
     const store = new MemoryStore();
-    await store.saveOrder("live", order);
+    await store.saveOrder(LIVE, order);
     const { paypal, calls } = fake(
       new Response(JSON.stringify({ id: order.paypalOrderId, status: "COMPLETED" }), {
         status: 201,
@@ -152,7 +135,7 @@ describe("adding tracking in the live sandbox", () => {
     );
     const result = await addTracking({
       store,
-      workspace: live,
+      shop: live,
       orderId: "W-1045",
       request: { carrier: "USPS", number: "9400111899223346123456" },
       paypal,
@@ -170,14 +153,78 @@ describe("adding tracking in the live sandbox", () => {
     ]);
     expect(result).toMatchObject({
       simulated: false,
-      order: { status: "label_created", tracking: { uploaded: true } },
+      order: {
+        status: "shipped",
+        tracking: { uploaded: true, scans: "none", paypalStatus: "SHIPPED", events: [] },
+      },
     });
-    expect(await loadPendingScans(store, "live")).toEqual({});
+    expect(await loadPendingScans(store, LIVE)).toEqual({});
+  });
+
+  it("uses the trackers API for a payment made outside Orders v2", async () => {
+    const store = new MemoryStore();
+    await store.saveOrder(LIVE, { ...order, paypalOrderId: null });
+    const { paypal, calls } = fake(
+      new Response(JSON.stringify({ tracker_identifiers: [{ transaction_id: order.captureId }] }), {
+        status: 200,
+      }),
+    );
+    await addTracking({
+      store,
+      shop: live,
+      orderId: "W-1045",
+      request: { carrier: "UPS", number: "1Z999AA10123456784" },
+      paypal,
+    });
+    expect(calls).toEqual([
+      {
+        url: "/v1/shipping/trackers-batch",
+        body: JSON.stringify({
+          trackers: [
+            {
+              transaction_id: "3C679366HH908993F",
+              tracking_number: "1Z999AA10123456784",
+              status: "SHIPPED",
+              carrier: "UPS",
+            },
+          ],
+        }),
+      },
+    ]);
+  });
+
+  it("refuses when the app can't add tracking, or the shop isn't connected", async () => {
+    const store = new MemoryStore();
+    await store.saveOrder(LIVE, order);
+    const request = { carrier: "USPS" as const, number: "9400111899223346123456" };
+    const noTracking = testRealShop(undefined, {
+      paypal: testConnection({
+        features: {
+          disputes: true,
+          respond: true,
+          transactions: false,
+          tracking: false,
+          webhooks: true,
+        },
+      }),
+    });
+    await expect(
+      addTracking({
+        store,
+        shop: noTracking,
+        orderId: "W-1045",
+        request,
+        paypal: fake(new Response("{}")).paypal,
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "paypal_missing_features" });
+    await expect(
+      addTracking({ store, shop: live, orderId: "W-1045", request, paypal: null }),
+    ).rejects.toMatchObject({ status: 409, code: "paypal_not_connected" });
   });
 
   it("reports PayPal's refusal plainly", async () => {
     const store = new MemoryStore();
-    await store.saveOrder("live", order);
+    await store.saveOrder(LIVE, order);
     const { paypal } = fake(
       new Response(
         JSON.stringify({
@@ -191,7 +238,7 @@ describe("adding tracking in the live sandbox", () => {
     await expect(
       addTracking({
         store,
-        workspace: live,
+        shop: live,
         orderId: "W-1045",
         request: { carrier: "USPS", number: "123456789" },
         paypal,
@@ -201,23 +248,23 @@ describe("adding tracking in the live sandbox", () => {
       message:
         "PayPal didn't accept the tracking: Invalid tracking number (UNPROCESSABLE_ENTITY). PayPal debug ID abc.",
     });
-    expect((await store.getOrder("live", "W-1045"))!.tracking).toBeNull();
+    expect((await store.getOrder(LIVE, "W-1045"))!.tracking).toBeNull();
   });
 });
 
 describe("order helpers", () => {
   it("puts orders waiting to ship first, newest first", async () => {
-    const { store, workspace } = await demoCopy();
-    const sorted = sortOrders(await store.listOrders(workspace.id));
+    const { store, shop } = await sampleCopy();
+    const sorted = sortOrders(await store.listOrders(shop.id));
     expect(sorted.slice(0, 2).map((o) => o.id)).toEqual(["W-1102", "W-1101"]);
     expect(Date.parse(sorted[2]!.placedAt)).toBeGreaterThan(Date.parse(sorted[3]!.placedAt));
   });
 
   it("links each order to its case", async () => {
-    const { store, workspace } = await demoCopy();
-    const cases = await store.listCases(workspace.id);
+    const { store, shop } = await sampleCopy();
+    const cases = await store.listCases(shop.id);
     const kase = cases.find((c) => c.id === "demo-inr-86")!;
-    const order = (await store.getOrder(workspace.id, kase.orderId))!;
+    const order = (await store.getOrder(shop.id, kase.orderId))!;
     expect(withChecks(order, cases)).toMatchObject({
       caseId: "demo-inr-86",
       checks: { covered: true },

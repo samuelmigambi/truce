@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// Truce's server reads and writes Firestore through the admin SDK, which these rules don't
+// apply to. No browser or other client may touch the database directly: every document is
+// closed to them. Deploy with: firebase deploy --only firestore:rules --project truce-disputes
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

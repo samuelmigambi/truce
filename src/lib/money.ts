@@ -12,14 +12,38 @@ export function toPayPalValue(cents: Cents): string {
   return (cents / 100).toFixed(2);
 }
 
-const whole = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0,
-});
-const exact = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+/** Formatters by currency, made once each. */
+const formats = new Map<string, { whole: Intl.NumberFormat; exact: Intl.NumberFormat }>();
+
+function formatsFor(currency: string) {
+  let found = formats.get(currency);
+  if (!found) {
+    // en-US keeps "$" for US dollars and writes "CA$", "A$", "£" and "€" for the others.
+    found = {
+      whole: new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency,
+        maximumFractionDigits: 0,
+      }),
+      exact: new Intl.NumberFormat("en-US", { style: "currency", currency }),
+    };
+    formats.set(currency, found);
+  }
+  return found;
+}
+
+/** "$86", or "$42.50" when there are cents; "£86" in pounds. */
+export function formatMoney(cents: Cents, currency = "USD"): string {
+  const { whole, exact } = formatsFor(currency);
+  return cents % 100 === 0 ? whole.format(cents / 100) : exact.format(cents / 100);
+}
+
+/** Whole units only, for figures that tick up: "$86". */
+export function formatMoneyWhole(cents: Cents, currency = "USD"): string {
+  return formatsFor(currency).whole.format(Math.round(cents / 100));
+}
 
 /** "$86", or "$42.50" when there are cents. */
 export function formatUsd(cents: Cents): string {
-  return cents % 100 === 0 ? whole.format(cents / 100) : exact.format(cents / 100);
+  return formatMoney(cents, "USD");
 }

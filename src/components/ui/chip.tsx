@@ -6,7 +6,7 @@ export type Tone = "neutral" | "outline" | "mist" | "lemon" | "moss" | "warn" | 
 const tones: Record<Tone, string> = {
   neutral: "bg-ink/[0.055] text-ink-2 border-transparent",
   outline: "bg-paper text-ink-2 border-line",
-  mist: "bg-mist text-ink border-[#e3eab8]",
+  mist: "bg-mist text-ink border-mist-line",
   lemon: "bg-lemon text-ink border-[#cfdf7f]",
   moss: "bg-moss/[0.09] text-moss-deep border-moss/15",
   warn: "bg-warn-50 text-warn-700 border-warn-200",
@@ -73,7 +73,7 @@ export function CountBadge({
     <span
       className={cn(
         "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium tabular-nums",
-        active ? "bg-ink text-cream" : "bg-ink/[0.07] text-ink-2",
+        active ? "bg-forest text-chalk" : "bg-ink/[0.07] text-ink-2",
         className,
       )}
     >

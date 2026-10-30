@@ -2,8 +2,8 @@ import "server-only";
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ChatCard, ChatEvent, ChatRequest } from "@/lib/api-types";
-import type { Workspace } from "@/lib/domain";
-import { formatUsd } from "@/lib/money";
+import type { Shop } from "@/lib/domain";
+import { formatMoney } from "@/lib/money";
 import type { Store } from "@/server/store/types";
 import { dailySpendCap, gate, spend, type Budget } from "../budget";
 import type { AiClient } from "../client";
@@ -13,7 +13,7 @@ import { chatSystem, REASON_LABEL } from "../prompts";
 import { clean } from "../safety";
 import { CHAT_TOOLS, prepareAction, type ChatContext } from "./tools";
 
-export { CHAT_TOOLS, addressNote, matchCases } from "./tools";
+export { CHAT_TOOLS, matchCases } from "./tools";
 
 /**
  * Ask Truce: one turn of the chat on Super VL, with the shop's tools. Text streams as it's written;
@@ -24,7 +24,8 @@ export { CHAT_TOOLS, addressNote, matchCases } from "./tools";
 export interface ChatDeps {
   store: Store;
   client: AiClient | null;
-  workspace: Workspace;
+  /** The shop the seller is asking about; the tools only ever read this one. */
+  shop: Shop;
   budget: Budget;
   models: Record<Job, string>;
   request: ChatRequest;
@@ -71,13 +72,13 @@ function cardKey(card: ChatCard): string {
 
 async function caseLine(
   store: Store,
-  workspaceId: string,
+  shop: Shop,
   caseId: string | null | undefined,
 ): Promise<string | null> {
   if (!caseId) return null;
-  const kase = await store.getCase(workspaceId, caseId).catch(() => null);
+  const kase = await store.getCase(shop.id, caseId).catch(() => null);
   if (!kase) return null;
-  return `${kase.id}: ${kase.buyer.name}, ${kase.itemSummary}, ${formatUsd(kase.amount)}, ${REASON_LABEL[kase.reason]}, ${kase.stage}.`;
+  return `${kase.id}: ${kase.buyer.name}, ${kase.itemSummary}, ${formatMoney(kase.amount, shop.currency)}, ${REASON_LABEL[kase.reason]}, ${kase.stage}.`;
 }
 
 export async function* chatTurn(deps: ChatDeps): AsyncGenerator<ChatEvent> {
@@ -86,20 +87,23 @@ export async function* chatTurn(deps: ChatDeps): AsyncGenerator<ChatEvent> {
     yield { type: "error", message: "Ask a question to start." };
     return;
   }
-  const allowed = await gate(deps.budget, "chat", deps.workspace, deps.spendCap ?? dailySpendCap());
+  const allowed = await gate(deps.budget, "chat", deps.shop, deps.spendCap ?? dailySpendCap());
   if (!allowed.ok) {
     yield { type: "error", message: allowed.message };
     return;
   }
   if (!deps.client) {
-    yield { type: "error", message: "Ask Truce needs Token Factory, which isn't connected here." };
+    yield {
+      type: "error",
+      message: "Ask Truce isn't available right now. Try again in a little while.",
+    };
     return;
   }
 
   const now = deps.now?.() ?? new Date();
   const context: ChatContext = {
     store: deps.store,
-    workspace: deps.workspace,
+    shop: deps.shop,
     client: deps.client,
     models: deps.models,
     now,
@@ -108,10 +112,9 @@ export async function* chatTurn(deps: ChatDeps): AsyncGenerator<ChatEvent> {
     signal: deps.signal,
   };
   const system = chatSystem({
-    shopName: deps.workspace.shopName,
+    shop: deps.shop,
     now,
-    live: deps.workspace.kind === "live",
-    caseLine: await caseLine(deps.store, deps.workspace.id, deps.request.caseId),
+    caseLine: await caseLine(deps.store, deps.shop, deps.request.caseId),
   });
   const shown = new Set<string>();
   const pending: Promise<void>[] = [];

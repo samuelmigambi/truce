@@ -59,7 +59,12 @@ export function eventStream(events: AsyncIterable<unknown>, signal?: AbortSignal
         }
       } catch (error) {
         console.error("[stream] failed", error);
-        send(encodeEvent({ type: "error", message: "Something went wrong on our side. Try again in a moment." }));
+        send(
+          encodeEvent({
+            type: "error",
+            message: "Something went wrong on our side. Try again in a moment.",
+          }),
+        );
       } finally {
         clearInterval(timer);
         try {

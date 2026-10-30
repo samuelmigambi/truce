@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Figtree, Fraunces } from "next/font/google";
 import Link from "next/link";
 import { FontScope } from "@/components/shop/font-scope";
+import { LightOnly } from "@/components/shop/light-only";
 import { ShopHeader } from "@/components/shop/shop-header";
 import { Wordmark } from "@/components/shop/ui";
 import { SHOP } from "@/lib/catalog";
@@ -23,13 +24,14 @@ export const metadata: Metadata = {
   icons: { icon: [{ url: "/shop/icon.svg", type: "image/svg+xml" }] },
 };
 
-/** Wick & Ember, the demo shop: its own warm look, fonts and voice. */
+/** Wick & Ember, the demo storefront: its own warm look, fonts and voice. */
 export default function ShopLayout({ children }: { children: React.ReactNode }) {
   return (
     <div
       className={`${fraunces.variable} ${figtree.variable} bg-linen font-shop text-espresso flex min-h-dvh flex-col`}
     >
       <FontScope classes={`${fraunces.variable} ${figtree.variable}`} />
+      <LightOnly />
       <ShopHeader />
       <main className="flex-1">{children}</main>
       <footer className="border-hairline mt-24 border-t">
@@ -58,13 +60,14 @@ export default function ShopLayout({ children }: { children: React.ReactNode }) 
             </ul>
           </div>
           <div>
-            <h2 className="text-espresso font-serif text-lg">A demo shop</h2>
+            <h2 className="text-espresso font-serif text-lg">A demo storefront</h2>
             <p className="text-espresso-2 mt-3 text-[15px] leading-relaxed">
-              Wick &amp; Ember is made up. Orders go through PayPal&rsquo;s sandbox and show up in{" "}
-              <Link href="/app/orders" className="text-ember underline-offset-4 hover:underline">
-                Truce&rsquo;s demo
-              </Link>
-              .
+              Wick &amp; Ember is made up. Orders go through PayPal&rsquo;s sandbox and show up in
+              the{" "}
+              <Link href="/app" className="text-ember underline-offset-4 hover:underline">
+                Truce
+              </Link>{" "}
+              shops connected to this sandbox app.
             </p>
           </div>
         </div>

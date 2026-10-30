@@ -51,7 +51,7 @@ describe("the read cache", () => {
     expect(listOrders).toHaveBeenCalledTimes(2);
   });
 
-  it("forgets a workspace's reads on any write to it, and counts the writes", async () => {
+  it("forgets a shop's reads on any write to it, and counts the writes", async () => {
     const { store } = await setup();
     const before = await store.listCases("w");
     const version = store.version("w");

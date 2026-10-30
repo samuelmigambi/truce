@@ -1,20 +1,26 @@
-import type { Analysis, Case, CaseEvent, Order, Workspace } from "@/lib/domain";
-import type { Store } from "@/server/store/types";
+import { summaryOf, type ChatThread } from "@/lib/chat-thread";
+import type { Analysis, AppNotification, Case, CaseEvent, Order, Shop, User } from "@/lib/domain";
+import type { SealedSecret, Store } from "@/server/store/types";
 import type { Budget } from "../budget";
 import type { AiClient } from "../client";
+import type { WebReader } from "../pipeline/types";
 
 /**
- * Fakes for the agent's tests: a store in memory, a budget that counts, and a Token Factory that
- * answers each request from handlers keyed by what's being asked (a forced tool by name, a stream,
- * an embedding), so steps that run side by side still get the right reply.
+ * Fakes for the agent's tests: a store in memory, a budget that counts, a web of fixed pages, and
+ * a Token Factory that answers each request from handlers keyed by what's being asked (a forced
+ * tool by name, a stream, an embedding), so steps that run side by side still get the right reply.
  */
 
 export function memoryStore(): Store & { cache: Map<string, unknown> } {
-  const workspaces = new Map<string, Workspace>();
+  const users = new Map<string, User>();
+  const shops = new Map<string, Shop>();
+  const secrets = new Map<string, SealedSecret>();
   const orders = new Map<string, Map<string, Order>>();
   const cases = new Map<string, Map<string, Case>>();
   const events = new Map<string, CaseEvent[]>();
   const analyses = new Map<string, Analysis>();
+  const notifications = new Map<string, Map<string, AppNotification>>();
+  const chats = new Map<string, Map<string, ChatThread>>();
   const cache = new Map<string, unknown>();
   const counters = new Map<string, number>();
   const bucket = <T>(map: Map<string, Map<string, T>>, id: string) => {
@@ -22,51 +28,118 @@ export function memoryStore(): Store & { cache: Map<string, unknown> } {
     return map.get(id)!;
   };
   const copy = <T>(value: T): T => structuredClone(value);
+  const shopList = (keep: (shop: Shop) => boolean) => [...shops.values()].filter(keep).map(copy);
+  const clear = (shopId: string) => {
+    orders.delete(shopId);
+    cases.delete(shopId);
+    notifications.delete(shopId);
+    for (const map of [events, analyses] as Map<string, unknown>[])
+      for (const key of [...map.keys()]) if (key.startsWith(`${shopId}/`)) map.delete(key);
+  };
   return {
     kind: "memory",
     cache,
-    async getWorkspace(id) {
-      return workspaces.has(id) ? copy(workspaces.get(id)!) : null;
+    async getUser(uid) {
+      return users.has(uid) ? copy(users.get(uid)!) : null;
     },
-    async saveWorkspace(workspace) {
-      workspaces.set(workspace.id, copy(workspace));
+    async saveUser(user) {
+      users.set(user.uid, copy(user));
     },
-    async clearWorkspace(id) {
-      orders.delete(id);
-      cases.delete(id);
+    async getShop(id) {
+      return shops.has(id) ? copy(shops.get(id)!) : null;
     },
-    async listOrders(ws) {
-      return [...bucket(orders, ws).values()].map(copy);
+    async saveShop(shop) {
+      shops.set(shop.id, copy(shop));
     },
-    async getOrder(ws, id) {
-      const order = bucket(orders, ws).get(id);
+    async listShopsFor(uid) {
+      return shopList((s) => s.memberIds.includes(uid));
+    },
+    async listConnectedShops() {
+      return shopList((s) => s.kind === "real" && s.paypal !== null);
+    },
+    async listShopsByPayPalApp(clientIdHash) {
+      return shopList((s) => s.paypal?.clientIdHash === clientIdHash);
+    },
+    async deleteShop(id) {
+      shops.delete(id);
+      clear(id);
+      for (const key of [...secrets.keys()]) if (key.startsWith(`${id}/`)) secrets.delete(key);
+    },
+    async clearShop(id) {
+      clear(id);
+    },
+    async getSecret(shopId, name) {
+      const secret = secrets.get(`${shopId}/${name}`);
+      return secret ? copy(secret) : null;
+    },
+    async saveSecret(shopId, name, secret) {
+      secrets.set(`${shopId}/${name}`, copy(secret));
+    },
+    async deleteSecret(shopId, name) {
+      secrets.delete(`${shopId}/${name}`);
+    },
+    async listChats(shopId, uid, limit) {
+      return [...bucket(chats, shopId).values()]
+        .filter((c) => c.uid === uid)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, limit)
+        .map(summaryOf);
+    },
+    async getChat(shopId, uid, chatId) {
+      const chat = bucket(chats, shopId).get(`${uid}/${chatId}`);
+      return chat ? copy(chat) : null;
+    },
+    async saveChat(shopId, chat) {
+      bucket(chats, shopId).set(`${chat.uid}/${chat.id}`, copy(chat));
+    },
+    async deleteChat(shopId, uid, chatId) {
+      bucket(chats, shopId).delete(`${uid}/${chatId}`);
+    },
+    async clearChats(shopId) {
+      chats.delete(shopId);
+    },
+    async listNotifications(shopId, limit) {
+      return [...bucket(notifications, shopId).values()]
+        .sort((a, b) => b.at.localeCompare(a.at))
+        .slice(0, limit)
+        .map(copy);
+    },
+    async saveNotification(shopId, notification) {
+      bucket(notifications, shopId).set(notification.id, copy(notification));
+    },
+    async listOrders(shopId) {
+      return [...bucket(orders, shopId).values()].map(copy);
+    },
+    async getOrder(shopId, id) {
+      const order = bucket(orders, shopId).get(id);
       return order ? copy(order) : null;
     },
-    async saveOrder(ws, order) {
-      bucket(orders, ws).set(order.id, copy(order));
+    async saveOrder(shopId, order) {
+      bucket(orders, shopId).set(order.id, copy(order));
     },
-    async listCases(ws) {
-      return [...bucket(cases, ws).values()].map(copy);
+    async listCases(shopId) {
+      return [...bucket(cases, shopId).values()].map(copy);
     },
-    async getCase(ws, id) {
-      const kase = bucket(cases, ws).get(id);
+    async getCase(shopId, id) {
+      const kase = bucket(cases, shopId).get(id);
       return kase ? copy(kase) : null;
     },
-    async saveCase(ws, kase) {
-      bucket(cases, ws).set(kase.id, copy(kase));
+    async saveCase(shopId, kase) {
+      bucket(cases, shopId).set(kase.id, copy(kase));
     },
-    async listEvents(ws, caseId) {
-      return copy(events.get(`${ws}/${caseId}`) ?? []);
+    async listEvents(shopId, caseId) {
+      return copy(events.get(`${shopId}/${caseId}`) ?? []);
     },
-    async addEvent(ws, caseId, event) {
-      events.set(`${ws}/${caseId}`, [...(events.get(`${ws}/${caseId}`) ?? []), copy(event)]);
+    async addEvent(shopId, caseId, event) {
+      const key = `${shopId}/${caseId}`;
+      events.set(key, [...(events.get(key) ?? []), copy(event)]);
     },
-    async getAnalysis(ws, caseId) {
-      const a = analyses.get(`${ws}/${caseId}`);
+    async getAnalysis(shopId, caseId) {
+      const a = analyses.get(`${shopId}/${caseId}`);
       return a ? copy(a) : null;
     },
-    async saveAnalysis(ws, analysis) {
-      analyses.set(`${ws}/${analysis.caseId}`, copy(analysis));
+    async saveAnalysis(shopId, analysis) {
+      analyses.set(`${shopId}/${analysis.caseId}`, copy(analysis));
     },
     async getCached<T>(key: string) {
       return cache.has(key) ? (copy(cache.get(key)) as T) : null;
@@ -85,6 +158,57 @@ export function memoryStore(): Store & { cache: Map<string, unknown> } {
 export interface CountingBudget extends Budget {
   spent: number;
   rateKeys: string[];
+}
+
+export interface FakeWeb extends WebReader {
+  searches: { query: string; domains: string[]; maxResults: number }[];
+  extracts: string[];
+}
+
+/**
+ * A web of fixed pages, by address. Search finds the pages on the asked domains that show a word
+ * of the query, most words first, unless `search` answers instead; extract reads pages back.
+ */
+export function fakeWeb(
+  pages: Record<string, string>,
+  opts: { search?: WebReader["search"] } = {},
+): FakeWeb {
+  const onDomains = (url: string, domains: string[]) => {
+    const host = new URL(url).hostname;
+    return domains.some((d) => host === d || host.endsWith(`.${d}`));
+  };
+  const web: FakeWeb = {
+    searches: [],
+    extracts: [],
+    async search(query, options) {
+      web.searches.push({ query, ...options });
+      if (opts.search) return opts.search(query, options);
+      const words = query
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((w) => w.length > 2);
+      return Object.entries(pages)
+        .filter(([url]) => onDomains(url, options.domains))
+        .map(([url, content]) => ({
+          url,
+          content,
+          shown: words.filter((w) => content.toLowerCase().includes(w)).length,
+        }))
+        .filter((p) => p.shown > 0)
+        .sort((a, b) => b.shown - a.shown)
+        .slice(0, options.maxResults)
+        .map(({ url, content }) => ({
+          title: content.split("\n")[0]!.replace(/^#+\s*/, ""),
+          url,
+          content: content.slice(0, 200),
+        }));
+    },
+    async extract(urls) {
+      web.extracts.push(...urls);
+      return urls.flatMap((url) => (url in pages ? [{ url, content: pages[url]! }] : []));
+    },
+  };
+  return web;
 }
 
 /** A budget with `limit` live runs per key and `spentAlready` dollars on today's counter. */

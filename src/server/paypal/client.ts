@@ -4,8 +4,9 @@ import type * as P from "./types";
 
 /**
  * A small, typed client for the PayPal REST APIs Truce uses: Orders v2 (checkout, capture,
- * tracking) and Customer Disputes v1. The keys stay on the server; tokens are cached until just
- * before they expire.
+ * tracking), Payments v2 (captures), Customer Disputes v1, shipping trackers, Transaction Search
+ * and webhooks. One client per PayPal app: the demo storefront's own, or a connected shop's. The
+ * keys stay on the server; tokens are cached until just before they expire.
  */
 
 export interface PayPalConfig {
@@ -15,7 +16,12 @@ export interface PayPalConfig {
   base: string;
 }
 
-/** From PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET and PAYPAL_ENV ("sandbox" unless "live"). */
+export const PAYPAL_BASE = {
+  sandbox: "https://api-m.sandbox.paypal.com",
+  live: "https://api-m.paypal.com",
+} as const;
+
+/** The demo storefront's app: PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_ENV ("sandbox" unless "live"). */
 export function paypalConfigFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): PayPalConfig | null {
@@ -26,7 +32,7 @@ export function paypalConfigFromEnv(
   return {
     clientId,
     clientSecret,
-    base: live ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com",
+    base: live ? PAYPAL_BASE.live : PAYPAL_BASE.sandbox,
   };
 }
 
@@ -47,6 +53,13 @@ export class PayPalError extends Error {
 type Fetch = typeof fetch;
 type Body = { json: unknown } | { form: FormData } | undefined;
 
+/** What PayPal's token says about the app: its scopes are the features it has turned on. */
+export interface TokenInfo {
+  scopes: string[];
+  appId: string | null;
+  expiresIn: number;
+}
+
 export class PayPal {
   private token: { value: string; expiresAt: number } | null = null;
 
@@ -60,8 +73,8 @@ export class PayPal {
     return this.config.base.includes("sandbox");
   }
 
-  private async accessToken(): Promise<string> {
-    if (this.token && this.token.expiresAt > this.now()) return this.token.value;
+  /** A new token, kept for later calls; its scopes and app ID are returned too. */
+  async tokenInfo(): Promise<TokenInfo> {
     const basic = Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString(
       "base64",
     );
@@ -74,17 +87,32 @@ export class PayPal {
       body: "grant_type=client_credentials",
     });
     if (!response.ok) throw await toError(response);
-    const data = (await response.json()) as { access_token: string; expires_in: number };
+    const data = (await response.json()) as {
+      access_token: string;
+      expires_in: number;
+      scope?: string;
+      app_id?: string;
+    };
     // Renew a minute early, so a token never expires mid-request.
     this.token = {
       value: data.access_token,
       expiresAt: this.now() + Math.max(0, data.expires_in - 60) * 1000,
     };
-    return this.token.value;
+    return {
+      scopes: (data.scope ?? "").split(/\s+/).filter(Boolean),
+      appId: data.app_id ?? null,
+      expiresIn: data.expires_in,
+    };
+  }
+
+  private async accessToken(): Promise<string> {
+    if (this.token && this.token.expiresAt > this.now()) return this.token.value;
+    await this.tokenInfo();
+    return this.token!.value;
   }
 
   private async request<T>(
-    method: "GET" | "POST" | "PATCH",
+    method: "GET" | "POST" | "PATCH" | "DELETE",
     path: string,
     body?: Body,
     headers: Record<string, string> = {},
@@ -116,17 +144,27 @@ export class PayPal {
 
   /** Creates an order; `requestId` makes retries safe (PayPal-Request-Id). */
   createOrder(order: P.CreateOrder, requestId: string): Promise<P.Order> {
-    return this.request("POST", "/v2/checkout/orders", { json: order }, {
-      "PayPal-Request-Id": requestId,
-      Prefer: "return=representation",
-    });
+    return this.request(
+      "POST",
+      "/v2/checkout/orders",
+      { json: order },
+      {
+        "PayPal-Request-Id": requestId,
+        Prefer: "return=representation",
+      },
+    );
   }
 
   captureOrder(orderId: string, requestId: string): Promise<P.Order> {
-    return this.request("POST", `/v2/checkout/orders/${enc(orderId)}/capture`, { json: {} }, {
-      "PayPal-Request-Id": requestId,
-      Prefer: "return=representation",
-    });
+    return this.request(
+      "POST",
+      `/v2/checkout/orders/${enc(orderId)}/capture`,
+      { json: {} },
+      {
+        "PayPal-Request-Id": requestId,
+        Prefer: "return=representation",
+      },
+    );
   }
 
   getOrder(orderId: string): Promise<P.Order> {
@@ -207,6 +245,58 @@ export class PayPal {
       `/v1/customer/disputes/${enc(id)}/require-evidence`,
       { json: { action } },
     );
+  }
+
+  // ---------- Payments v2 and shipping trackers ----------
+
+  /** A captured payment: its amount, Seller Protection, and the order it belongs to. */
+  getCapture(captureId: string): Promise<P.CaptureDetails> {
+    return this.request("GET", `/v2/payments/captures/${enc(captureId)}`);
+  }
+
+  /** One tracker by its ID, `<transaction id>-<tracking number>`: the carrier and status. */
+  getTracker(trackerId: string): Promise<P.Tracker> {
+    return this.request("GET", `/v1/shipping/trackers/${enc(trackerId)}`);
+  }
+
+  /** The trackers on one payment, by its transaction (capture) ID. */
+  listTrackers(transactionId: string): Promise<{ trackers?: P.Tracker[] }> {
+    return this.request("GET", `/v1/shipping/trackers?transaction_id=${enc(transactionId)}`);
+  }
+
+  /** Adds tracking to a payment by its transaction (capture) ID, for orders made outside Orders v2. */
+  addTrackers(trackers: P.NewTracker[]): Promise<P.TrackerBatch> {
+    return this.request("POST", "/v1/shipping/trackers-batch", { json: { trackers } });
+  }
+
+  // ---------- Transaction Search ----------
+
+  /** One page of transactions between two dates, at most 31 days apart. */
+  searchTransactions(query: P.TransactionQuery): Promise<P.TransactionPage> {
+    const params = new URLSearchParams({
+      start_date: query.startDate,
+      end_date: query.endDate,
+      fields: "transaction_info,payer_info,shipping_info,cart_info",
+      page_size: String(query.pageSize ?? 500),
+      page: String(query.page ?? 1),
+    });
+    return this.request("GET", `/v1/reporting/transactions?${params}`);
+  }
+
+  // ---------- Webhooks ----------
+
+  listWebhooks(): Promise<{ webhooks?: P.Webhook[] }> {
+    return this.request("GET", "/v1/notifications/webhooks");
+  }
+
+  createWebhook(url: string, events: string[]): Promise<P.Webhook> {
+    return this.request("POST", "/v1/notifications/webhooks", {
+      json: { url, event_types: events.map((name) => ({ name })) },
+    });
+  }
+
+  deleteWebhook(id: string): Promise<void> {
+    return this.request("DELETE", `/v1/notifications/webhooks/${enc(id)}`);
   }
 
   private requireSandbox() {

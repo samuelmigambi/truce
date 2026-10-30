@@ -1,8 +1,8 @@
-import type { Metadata } from "next";
-import { CasesInbox } from "@/components/app/cases/inbox";
+import { redirect } from "next/navigation";
+import { landingFor, pageShops, requirePageUser } from "@/server/auth/pages";
 
-export const metadata: Metadata = { title: "Cases" };
-
-export default function CasesPage() {
-  return <CasesInbox />;
+/** /app opens the shop the person last used, or onboarding when no shop is ready yet. */
+export default async function AppHome() {
+  const user = await requirePageUser("/app");
+  redirect(landingFor(user, await pageShops(user)));
 }

@@ -2,9 +2,11 @@ import "server-only";
 
 import { z } from "zod";
 import type { ChatCard } from "@/lib/api-types";
-import type { Analysis, Case, Draft, Move, Order, Workspace } from "@/lib/domain";
-import { formatUsd } from "@/lib/money";
+import type { Analysis, Case, Draft, Move, Order, Shop } from "@/lib/domain";
+import { formatMoney, type Cents } from "@/lib/money";
+import { addressNote } from "@/lib/notes";
 import { dueLabel } from "@/lib/rules/deadlines";
+import { DISPUTE_FEES } from "@/lib/rules/fees";
 import { suggestOffer } from "@/lib/rules/options";
 import { shippingChecks } from "@/lib/rules/protection";
 import { RATIO_LINE } from "@/lib/rules/ratio";
@@ -18,16 +20,18 @@ import { ToolInputError, type Tool } from "../loop";
 import type { Job, Usage } from "../models";
 import { REASON_LABEL } from "../prompts";
 import { clean, fence } from "../safety";
+import { salesKnown, type ShopLocale } from "../shop";
 
 /**
- * Ask Truce's tools. Each one reads the workspace through the store and answers in plain JSON for
- * the model, with a card for the app where it helps. None of them changes anything:
- * prepare_action only builds an action card, and the seller approves it in the app.
+ * Ask Truce's tools. Each one reads the shop through the store and answers in plain JSON for the
+ * model, with a card for the app where it helps. Dates are on the shop's calendar and money is in
+ * its currency. None of them changes anything: prepare_action only builds an action card, and the
+ * seller approves it in the app.
  */
 
 export interface ChatContext {
   store: Store;
-  workspace: Workspace;
+  shop: Shop;
   client: AiClient;
   models: Record<Job, string>;
   now: Date;
@@ -40,14 +44,22 @@ export interface ChatContext {
 
 async function casesOf(ctx: ChatContext): Promise<Case[]> {
   ctx.cache ??= {};
-  ctx.cache.cases ??= await ctx.store.listCases(ctx.workspace.id);
+  ctx.cache.cases ??= await ctx.store.listCases(ctx.shop.id);
   return ctx.cache.cases;
 }
 
 async function ordersOf(ctx: ChatContext): Promise<Order[]> {
   ctx.cache ??= {};
-  ctx.cache.orders ??= await ctx.store.listOrders(ctx.workspace.id);
+  ctx.cache.orders ??= await ctx.store.listOrders(ctx.shop.id);
   return ctx.cache.orders;
+}
+
+/** The shop's money and calendar, as the tools write them. */
+function writer(shop: ShopLocale) {
+  return {
+    money: (cents: Cents) => formatMoney(cents, shop.currency),
+    day: (iso: string) => formatDay(iso, shop.timeZone),
+  };
 }
 
 const STOP = new Set([
@@ -108,23 +120,25 @@ export function matchCases(cases: Case[], query: string): Case[] {
 function pickCase(cases: Case[], query: string, what = "case"): Case {
   const found = matchCases(cases, query);
   if (found.length === 0)
-    throw new ToolInputError(`No ${what} matches "${query}". Call list_cases to see them.`);
+    throw new ToolInputError(
+      `No ${what} matches "${query}". If that's an order number, call get_order with it. Call list_cases to see the cases.`,
+    );
   return found[0]!;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-function caseRow(c: Case, now: Date, analysis: Analysis | null) {
+function caseRow(c: Case, ctx: ChatContext, analysis: Analysis | null) {
   return {
     id: c.id,
     dispute: c.paypalDisputeId,
     buyer: c.buyer.name,
     item: c.itemSummary,
-    amount: formatUsd(c.amount),
+    amount: formatMoney(c.amount, ctx.shop.currency),
     reason: REASON_LABEL[c.reason],
     stage: c.stage,
     status: c.status,
-    due: c.dueAt && c.status !== "closed" ? dueLabel(new Date(c.dueAt), now) : null,
+    due: c.dueAt && c.status !== "closed" ? dueLabel(new Date(c.dueAt), ctx.now) : null,
     outcome: c.outcome,
     truce: analysis
       ? { move: analysis.recommendation.move, headline: analysis.recommendation.headline }
@@ -137,7 +151,7 @@ const CaseQuery = z.object({
     .string()
     .min(1)
     .describe(
-      "A case ID (like demo-inr-86), a PayPal dispute ID (PP-D-…), the buyer's name, or words about the item",
+      "A case ID or PayPal dispute ID as list_cases shows it, the buyer's name, or words about the item",
     ),
 });
 
@@ -147,7 +161,7 @@ export const listCases: Tool<
 > = {
   name: "list_cases",
   description:
-    "The shop's dispute cases with buyer, item, amount, reason, stage, deadline and Truce's recommended move.",
+    "The shop's dispute cases with buyer, item, amount, reason, stage, deadline and Truce's recommended move. Open cases unless the filter says 'closed' or 'all'.",
   input: z.object({
     filter: z
       .enum(["open", "needs_you", "waiting_buyer", "with_paypal", "closed", "all"])
@@ -165,9 +179,9 @@ export const listCases: Tool<
       )
       .slice(0, 25);
     const analyses = await Promise.all(
-      cases.map((c) => ctx.store.getAnalysis(ctx.workspace.id, c.id).catch(() => null)),
+      cases.map((c) => ctx.store.getAnalysis(ctx.shop.id, c.id).catch(() => null)),
     );
-    const rows = cases.map((c, i) => caseRow(c, ctx.now, analyses[i] ?? null));
+    const rows = cases.map((c, i) => caseRow(c, ctx, analyses[i] ?? null));
     const noun = filter === "open" ? "open case" : filter === "closed" ? "closed case" : "case";
     return { content: { cases: rows }, label: `Found ${plural(rows.length, noun, `${noun}s`)}` };
   },
@@ -180,29 +194,30 @@ export const getCase: Tool<{ case: string }, ChatContext> = {
   input: CaseQuery,
   pending: "Opening the case",
   async run({ case: query }, ctx) {
+    const { money, day } = writer(ctx.shop);
     const kase = pickCase(await casesOf(ctx), query);
     const [order, events, analysis] = await Promise.all([
-      ctx.store.getOrder(ctx.workspace.id, kase.orderId),
-      ctx.store.listEvents(ctx.workspace.id, kase.id),
-      ctx.store.getAnalysis(ctx.workspace.id, kase.id),
+      ctx.store.getOrder(ctx.shop.id, kase.orderId),
+      ctx.store.listEvents(ctx.shop.id, kase.id),
+      ctx.store.getAnalysis(ctx.shop.id, kase.id),
     ]);
     const content = {
-      ...caseRow(kase, ctx.now, analysis),
-      opened: formatDay(kase.openedAt),
+      ...caseRow(kase, ctx, analysis),
+      opened: day(kase.openedAt),
       buyerClaim: fence("buyer", kase.buyerClaim, 800),
       messages: kase.messages.slice(-6).map((m) => ({
         from: m.from,
-        at: formatDay(m.at),
+        at: day(m.at),
         text:
           m.from === "seller"
             ? m.text
             : fence(m.from === "buyer" ? "buyer" : "paypal", m.text, 800),
       })),
       photos: kase.photos.map((p) => p.caption),
-      order: order ? orderFacts(order) : null,
+      order: order ? orderFacts(order, ctx.shop) : null,
       timeline: events
         .slice(-8)
-        .map((e) => `${formatDay(e.at)}: ${e.title}${e.detail ? ` (${e.detail})` : ""}`),
+        .map((e) => `${day(e.at)}: ${e.title}${e.detail ? ` (${e.detail})` : ""}`),
       analysis: analysis
         ? {
             move: analysis.recommendation.move,
@@ -211,11 +226,7 @@ export const getCase: Tool<{ case: string }, ChatContext> = {
             reasons: analysis.recommendation.reasons.map((r) => r.text),
             costs: analysis.options
               .filter((o) => o.available)
-              .map((o) => ({
-                move: o.move,
-                expected: formatUsd(o.expected),
-                fee: formatUsd(o.fee),
-              })),
+              .map((o) => ({ move: o.move, expected: money(o.expected), fee: money(o.fee) })),
             draftChecked: analysis.verification.ok,
           }
         : "Not analyzed yet.",
@@ -225,14 +236,16 @@ export const getCase: Tool<{ case: string }, ChatContext> = {
   },
 };
 
-function orderFacts(order: Order) {
+function orderFacts(order: Order, shop: ShopLocale) {
+  const { money, day } = writer(shop);
   const checks = shippingChecks(order);
+  const lastScan = order.tracking?.events?.at(-1);
   return {
     id: order.id,
     buyer: order.buyer.name,
     items: order.items.map((i) => `${i.quantity} × ${i.name}`).join(", "),
-    amount: formatUsd(order.amount),
-    placed: formatDay(order.placedAt),
+    amount: money(order.amount),
+    placed: day(order.placedAt),
     status: order.status,
     sellerProtection: order.protection,
     tracking: order.tracking
@@ -240,10 +253,11 @@ function orderFacts(order: Order) {
           carrier: order.tracking.carrier,
           number: order.tracking.number,
           onPayPal: order.tracking.uploaded,
-          delivered: order.tracking.deliveredAt ? formatDay(order.tracking.deliveredAt) : null,
-          lastScan: order.tracking.events?.at(-1)
-            ? `${formatDay(order.tracking.events.at(-1)!.at)}: ${order.tracking.events.at(-1)!.detail}`
-            : null,
+          delivered: order.tracking.deliveredAt ? day(order.tracking.deliveredAt) : null,
+          lastScan: lastScan
+            ? `${day(lastScan.at)}: ${lastScan.detail}`
+            : "No carrier scans on file",
+          ...(order.tracking.paypalStatus ? { paypalStatus: order.tracking.paypalStatus } : {}),
         }
       : null,
     checks: checks.checks.map((c) => ({ ok: c.ok, check: c.label })),
@@ -256,7 +270,7 @@ export const getOrder: Tool<{ order: string }, ChatContext> = {
   description:
     "One order: items, amount, tracking, Seller Protection status and the before-shipping checks.",
   input: z.object({
-    order: z.string().min(1).describe("An order number like W-1042, or the buyer's name"),
+    order: z.string().min(1).describe("An order number as the case shows it, or the buyer's name"),
   }),
   pending: "Opening the order",
   async run({ order: query }, ctx) {
@@ -268,17 +282,22 @@ export const getOrder: Tool<{ order: string }, ChatContext> = {
         .filter((o) => o.buyer.name.toLowerCase().includes(q))
         .sort((a, b) => b.placedAt.localeCompare(a.placedAt))[0];
     if (!order)
-      throw new ToolInputError(`No order matches "${query}". Order numbers look like W-1042.`);
+      throw new ToolInputError(
+        `No order matches "${query}". Use the order number a case shows, or the buyer's name.`,
+      );
     const card: ChatCard = { kind: "order", orderId: order.id };
-    return { content: orderFacts(order), label: `Order ${order.id} · ${order.buyer.name}`, card };
+    const addressOff = shippingChecks(order).checks.some((c) => c.id === "address" && !c.ok);
+    return {
+      content: {
+        ...orderFacts(order, ctx.shop),
+        // The note the Orders screen shows the seller, for when they ask to reword it.
+        noteToBuyer: addressOff ? addressNote(order, ctx.shop.name) : null,
+      },
+      label: `Order ${order.id} · ${order.buyer.name}`,
+      card,
+    };
   },
 };
-
-/** The note Truce drafts when a buyer wants an order shipped somewhere PayPal doesn't know about. */
-export function addressNote(order: Order, shopName: string): string {
-  const first = order.buyer.name.split(/\s+/)[0] ?? order.buyer.name;
-  return `Hi ${first}, thanks for your order! We can only ship to the address on your PayPal payment, which keeps your order protected. If you'd like it sent somewhere else, please update the shipping address in PayPal and reply here, and we'll ship it straight away. ${shopName}`;
-}
 
 export const ordersAtRisk: Tool<{ days: number }, ChatContext> = {
   name: "orders_at_risk",
@@ -295,6 +314,7 @@ export const ordersAtRisk: Tool<{ days: number }, ChatContext> = {
   }),
   pending: "Checking orders before they ship",
   async run({ days }, ctx) {
+    const { money } = writer(ctx.shop);
     const [orders, cases] = await Promise.all([ordersOf(ctx), casesOf(ctx)]);
     const toShip = orders.filter((o) => o.status === "paid" || o.status === "label_created");
     const flagged = toShip
@@ -303,11 +323,11 @@ export const ordersAtRisk: Tool<{ days: number }, ChatContext> = {
       .map(({ o, checks }) => ({
         order: o.id,
         buyer: o.buyer.name,
-        amount: formatUsd(o.amount),
+        amount: money(o.amount),
         problems: checks.checks.filter((c) => !c.ok).map((c) => c.label),
         buyerNote: o.note ? fence("buyer", o.note, 500) : null,
         draftedNote: checks.checks.some((c) => c.id === "address" && !c.ok)
-          ? addressNote(o, ctx.workspace.shopName)
+          ? addressNote(o, ctx.shop.name)
           : null,
       }));
     const horizon = ctx.now.getTime() + days * 24 * 60 * 60 * 1000;
@@ -315,10 +335,9 @@ export const ordersAtRisk: Tool<{ days: number }, ChatContext> = {
       .filter((c) => c.status !== "closed" && c.dueAt && Date.parse(c.dueAt) <= horizon)
       .sort((a, b) => a.dueAt!.localeCompare(b.dueAt!))
       .map((c) => ({
-        case: c.id,
         buyer: c.buyer.name,
         item: c.itemSummary,
-        amount: formatUsd(c.amount),
+        amount: money(c.amount),
         due: dueLabel(new Date(c.dueAt!), ctx.now),
       }));
     const content = {
@@ -338,6 +357,8 @@ export const ordersAtRisk: Tool<{ days: number }, ChatContext> = {
   },
 };
 
+const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
+
 export const claimsRatioTool: Tool<Record<string, never>, ChatContext> = {
   name: "claims_ratio",
   description:
@@ -345,8 +366,25 @@ export const claimsRatioTool: Tool<Record<string, never>, ChatContext> = {
   input: z.object({}),
   pending: "Working out the claims ratio",
   async run(_input, ctx) {
-    const ratio = shopRatio(await ordersOf(ctx), await casesOf(ctx), ctx.now.getTime());
-    const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
+    const known = salesKnown(ctx.shop);
+    const ratio = shopRatio(await ordersOf(ctx), await casesOf(ctx), ctx.now.getTime(), known);
+    const highVolumeFee = formatMoney(DISPUTE_FEES.highVolume, ctx.shop.currency);
+    const label = "Claims ratio, last 90 days";
+    if (!ratio.known) {
+      return {
+        content: {
+          ratio: "unknown",
+          line: pct(RATIO_LINE),
+          claims: ratio.claims,
+          sales: "unknown",
+          overTheLine: false,
+          meaning:
+            "The claims ratio is unknown: the shop's sales history isn't available, because its PayPal app doesn't have Transaction Search, so Truce only sees the orders that have disputes. Truce treats the shop as under the line for fees. Turning on Transaction Search for the app lets Truce work the ratio out.",
+        },
+        label: "Claims ratio unknown without the sales history",
+        card: { kind: "metric", label, value: "Unknown" } satisfies ChatCard,
+      };
+    }
     const content = {
       ratio: pct(ratio.ratio),
       line: pct(RATIO_LINE),
@@ -355,14 +393,10 @@ export const claimsRatioTool: Tool<Record<string, never>, ChatContext> = {
       headroom: ratio.headroom,
       overTheLine: ratio.highVolume,
       meaning: ratio.highVolume
-        ? "Over the line: every claim now costs the $30 high-volume fee, even when the shop wins."
-        : `Under the line: ${plural(ratio.headroom, "more claim", "more claims")} before the $30 high-volume fee applies.`,
+        ? `Over the line: every claim now costs the ${highVolumeFee} high-volume fee, even when the shop wins.`
+        : `Under the line: ${plural(ratio.headroom, "more claim", "more claims")} before the ${highVolumeFee} high-volume fee applies.`,
     };
-    const card: ChatCard = {
-      kind: "metric",
-      label: "Claims ratio, last 90 days",
-      value: pct(ratio.ratio),
-    };
+    const card: ChatCard = { kind: "metric", label, value: pct(ratio.ratio) };
     return { content, label: `Claims ratio ${pct(ratio.ratio)}`, card };
   },
 };
@@ -374,26 +408,27 @@ export const explainOutcome: Tool<{ case: string }, ChatContext> = {
   input: CaseQuery,
   pending: "Reading how it ended",
   async run({ case: query }, ctx) {
+    const { money, day } = writer(ctx.shop);
     const closed = (await casesOf(ctx)).filter((c) => c.status === "closed");
     const kase = pickCase(closed, query, "closed case");
-    const events = await ctx.store.listEvents(ctx.workspace.id, kase.id);
+    const events = await ctx.store.listEvents(ctx.shop.id, kase.id);
     const content = {
       case: kase.id,
       buyer: kase.buyer.name,
       item: kase.itemSummary,
       reason: REASON_LABEL[kase.reason],
       stageItEndedAt: kase.stage,
-      summary: closedSummary(kase),
-      opened: formatDay(kase.openedAt),
-      closed: kase.closedAt ? formatDay(kase.closedAt) : null,
+      summary: closedSummary(kase, ctx.shop.currency),
+      opened: day(kase.openedAt),
+      closed: kase.closedAt ? day(kase.closedAt) : null,
       buyerClaim: fence("buyer", kase.buyerClaim, 600),
       money: {
-        kept: formatUsd(kase.moneyKept),
-        feeCharged: formatUsd(kase.feeCharged),
-        feeAvoided: formatUsd(kase.feeAvoided),
+        kept: money(kase.moneyKept),
+        feeCharged: money(kase.feeCharged),
+        feeAvoided: money(kase.feeAvoided),
       },
       timeline: events.map(
-        (e) => `${formatDay(e.at)} · ${e.actor}: ${e.title}${e.detail ? ` (${e.detail})` : ""}`,
+        (e) => `${day(e.at)} · ${e.actor}: ${e.title}${e.detail ? ` (${e.detail})` : ""}`,
       ),
       paypalSaid: kase.messages
         .filter((m) => m.from === "paypal")
@@ -416,6 +451,7 @@ export const similarCases: Tool<{ case: string }, ChatContext> = {
     const kase = pickCase(cases, query);
     const closed = cases.filter((c) => c.status === "closed" && c.id !== kase.id);
     const found = await findSimilar(ctx.client, ctx.store, ctx.models.embed, kase, closed, {
+      currency: ctx.shop.currency,
       signal: ctx.signal,
       attemptTimeoutMs: 12_000,
     });
@@ -437,28 +473,29 @@ function plainDraftText(
   kase: Case,
   order: Order | null,
   move: Move,
-  offer: number,
-  shopName: string,
+  offer: Cents,
+  shop: ShopLocale & Pick<Shop, "name">,
 ): string {
+  const { money, day } = writer(shop);
   const first = kase.buyer.name.split(/\s+/)[0] ?? kase.buyer.name;
-  const sign = `\n\nWarm regards,\n${shopName}`;
+  const sign = `\n\nWarm regards,\n${shop.name}`;
   if (move === "refund")
-    return `Hi ${first},\n\nWe're sorry about your order. We're refunding the full ${formatUsd(kase.amount)} to your PayPal account. Thank you for your patience.${sign}`;
+    return `Hi ${first},\n\nWe're sorry about your order. We're refunding the full ${money(kase.amount)} to your PayPal account. Thank you for your patience.${sign}`;
   if (move === "settle")
-    return `Hi ${first},\n\nWe're sorry it wasn't what you expected. We'd like to offer a partial refund of ${formatUsd(offer)}, and you keep the item.${sign}`;
+    return `Hi ${first},\n\nWe're sorry it wasn't what you expected. We'd like to offer a partial refund of ${money(offer)}, and you keep the item.${sign}`;
   const delivered = order?.tracking?.deliveredAt;
   if (kase.stage !== "inquiry") {
     return [
-      order ? `Order ${order.id} for ${formatUsd(order.amount)} was paid through PayPal.` : "",
+      order ? `Order ${order.id} for ${money(order.amount)} was paid through PayPal.` : "",
       order?.tracking
         ? `It shipped with ${order.tracking.carrier} tracking ${order.tracking.number}.`
         : "",
-      delivered ? `${order!.tracking!.carrier} shows it delivered on ${formatDay(delivered)}.` : "",
+      delivered ? `${order!.tracking!.carrier} shows it delivered on ${day(delivered)}.` : "",
     ]
       .filter(Boolean)
       .join(" ");
   }
-  return `Hi ${first},\n\nThank you for your message. ${delivered ? `Our tracking shows the order was delivered on ${formatDay(delivered)}.` : "We're checking on your order with the carrier."} If anything's still wrong, reply here and we'll help.${sign}`;
+  return `Hi ${first},\n\nThank you for your message. ${delivered ? `Our tracking shows the order was delivered on ${day(delivered)}.` : "We're checking on your order with the carrier."} If anything's still wrong, reply here and we'll help.${sign}`;
 }
 
 export const prepareAction: Tool<{ case: string; move: Move; message?: string }, ChatContext> = {
@@ -473,7 +510,7 @@ export const prepareAction: Tool<{ case: string; move: Move; message?: string },
       .max(1500)
       .optional()
       .describe(
-        "The words to send, in the seller's voice, when the seller asked for something specific (an apology, a detail). Leave it out to use Truce's checked draft.",
+        "The whole message to the buyer, written as the seller, when the seller asked for something specific (an apology, a detail): greet the buyer by first name, say plainly what's happening (for a refund, the amount going back to their PayPal account), include what the seller asked for, and sign off with the shop's name. Two to four warm sentences. Leave it out to use Truce's checked draft.",
       ),
   }),
   pending: "Preparing the action",
@@ -489,8 +526,8 @@ export const prepareAction: Tool<{ case: string; move: Move; message?: string },
       );
     }
     const [order, analysis] = await Promise.all([
-      ctx.store.getOrder(ctx.workspace.id, kase.orderId),
-      ctx.store.getAnalysis(ctx.workspace.id, kase.id),
+      ctx.store.getOrder(ctx.shop.id, kase.orderId),
+      ctx.store.getAnalysis(ctx.shop.id, kase.id),
     ]);
     const same = analysis?.recommendation.move === move;
     const offer =
@@ -512,7 +549,7 @@ export const prepareAction: Tool<{ case: string; move: Move; message?: string },
               : "evidence";
       draft = {
         kind,
-        text: words ?? plainDraftText(kase, order, move, offer, ctx.workspace.shopName),
+        text: words ?? plainDraftText(kase, order, move, offer, ctx.shop),
         evidenceIds: same && analysis ? analysis.draft.evidenceIds : [],
         ...(kind === "offer" ? { offerAmount: offer } : {}),
         ...(kind === "evidence"
@@ -520,8 +557,8 @@ export const prepareAction: Tool<{ case: string; move: Move; message?: string },
           : {}),
       };
     }
-    const amount =
-      move === "settle" ? formatUsd(offer) : move === "refund" ? formatUsd(kase.amount) : "";
+    const { money } = writer(ctx.shop);
+    const amount = move === "settle" ? money(offer) : move === "refund" ? money(kase.amount) : "";
     const label =
       move === "fight"
         ? kase.stage === "inquiry"

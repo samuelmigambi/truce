@@ -1,8 +1,8 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import type { Case, CaseOutcome, SimilarCase } from "@/lib/domain";
-import { formatUsd } from "@/lib/money";
+import type { Case, CaseOutcome, CurrencyCode, SimilarCase } from "@/lib/domain";
+import { formatMoney } from "@/lib/money";
 import type { Store } from "@/server/store/types";
 import type { AiClient } from "./client";
 import { requestOptions } from "./loop";
@@ -12,8 +12,9 @@ import { clean } from "./safety";
 /**
  * Similar past cases, from Qwen3 embeddings on Token Factory. Vectors are cached by a hash of the
  * model and the text, in the store's shared cache, so a closed case is embedded once for every
- * demo copy. Qwen3's embeddings are trained to be cut short (Matryoshka), so 1,024 of its 4,096
- * dimensions keep the cache small without losing much.
+ * sample shop. Qwen3's embeddings are trained to be cut short (Matryoshka), so 1,024 of its 4,096
+ * dimensions keep the cache small without losing much. The texts are the item and the buyer's own
+ * words, never figures Truce formats, so a vector doesn't depend on the shop's currency or zone.
  */
 export const EMBED_DIMENSIONS = 1024;
 const CACHE_SECONDS = 120 * 24 * 60 * 60;
@@ -111,15 +112,16 @@ const OUTCOME: Record<CaseOutcome, string> = {
   buyer_closed: "closed by the buyer",
 };
 
-/** "Ember mug candle, item not as described: lost, $28 refunded and a $15 fee." */
-export function closedSummary(kase: Case): string {
+/** "Ember mug candle, item not as described: lost, $28 refunded and a fee of $15", in `currency`. */
+export function closedSummary(kase: Case, currency: CurrencyCode): string {
   const outcome = kase.outcome ? OUTCOME[kase.outcome] : "closed";
   const paid = kase.amount - kase.moneyKept;
+  const format = (cents: number) => formatMoney(cents, currency);
   const money: string[] = [];
   if (paid > 0)
-    money.push(`${formatUsd(paid)} ${kase.outcome === "settled" ? "partial refund" : "refunded"}`);
-  if (kase.feeCharged > 0) money.push(`a ${formatUsd(kase.feeCharged)} fee`);
-  if (kase.feeAvoided > 0) money.push(`${formatUsd(kase.feeAvoided)} in fees avoided`);
+    money.push(`${format(paid)} ${kase.outcome === "settled" ? "partial refund" : "refunded"}`);
+  if (kase.feeCharged > 0) money.push(`a fee of ${format(kase.feeCharged)}`);
+  if (kase.feeAvoided > 0) money.push(`${format(kase.feeAvoided)} in fees avoided`);
   return `${kase.itemSummary}, ${REASON_LABEL[kase.reason]}: ${outcome}${money.length ? `, ${money.join(" and ")}` : ""}.`;
 }
 
@@ -133,7 +135,7 @@ export interface SimilarSearch {
 
 /**
  * The closed cases most like `kase`, best first: the same kind of dispute, ranked by meaning, above
- * a floor that keeps unrelated ones out.
+ * a floor that keeps unrelated ones out. Their summaries are in the shop's `currency`.
  */
 export async function findSimilar(
   ai: Pick<AiClient, "embeddings">,
@@ -141,7 +143,13 @@ export async function findSimilar(
   model: string,
   kase: Case,
   closed: Case[],
-  opts: { limit?: number; floor?: number; signal?: AbortSignal; attemptTimeoutMs?: number } = {},
+  opts: {
+    currency: CurrencyCode;
+    limit?: number;
+    floor?: number;
+    signal?: AbortSignal;
+    attemptTimeoutMs?: number;
+  },
 ): Promise<SimilarSearch> {
   const pool = closed.filter((c) => c.id !== kase.id && c.reason === kase.reason);
   if (pool.length === 0) return { similar: [], searched: false, usage: null, ms: 0 };
@@ -164,14 +172,14 @@ export async function findSimilar(
       caseId: m.kase.id,
       similarity: Math.round(m.similarity * 1000) / 1000,
       outcome: m.kase.outcome,
-      summary: closedSummary(m.kase),
+      summary: closedSummary(m.kase, opts.currency),
     }));
   return { similar, searched: true, usage, ms };
 }
 
 /**
  * Below this, a closed case is about something else. Measured on 27 Oct with Qwen3-Embedding-8B on
- * the demo cases: the cracked mug scores 0.79 against the broken mugs and 0.65 against the cracked
+ * the sample cases: the cracked mug scores 0.79 against the broken mugs and 0.65 against the cracked
  * jar, but 0.60 against a size complaint.
  */
 export const SIMILAR_FLOOR = 0.62;

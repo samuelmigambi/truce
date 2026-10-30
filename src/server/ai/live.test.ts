@@ -1,55 +1,54 @@
 import { writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { AnalysisEvent } from "@/lib/api-types";
-import type { Analysis, Workspace } from "@/lib/domain";
-import { buildSeed, seedVersionFor } from "@/server/demo/seed";
+import type { Analysis, Shop } from "@/lib/domain";
 import { tokenFactory } from "./client";
 import { modelsFromEnv, shortModelName } from "./models";
 import { publicPhotoReader } from "./photos";
 import { chatTurn } from "./chat";
 import { analyzeCase } from "./pipeline";
-import { webReader } from "./wiring";
+import { webReader } from "./web";
 import { fakeBudget, memoryStore } from "./testing/fakes";
+import { sampleShop } from "./testing/fixtures";
 
 /**
- * The whole analysis on Token Factory, on a fresh copy of the demo seed. Runs only with
- * NEBIUS_API_KEY set, costs a few cents, and prints a short summary: the move, the cost, and each
- * step's model and time. TRUCE_LIVE_CASE picks the cases, comma-separated (the cracked mug by default) and
- * TRUCE_PHOTO_ROOT where the demo photos are, when they aren't in public/ yet. Vitest keeps a passing
- * test's output to itself, so run it with --silent=false to see the summary.
+ * The whole analysis on Token Factory, in a fresh sample shop seeded with Wick & Ember. Runs only
+ * with NEBIUS_API_KEY set, costs a few cents, and prints a short summary: the move, the cost, and
+ * each step's model and time. TRUCE_LIVE_CASE picks the cases, comma-separated (the cracked mug by
+ * default) and TRUCE_PHOTO_ROOT where the sample photos are, when they aren't in public/ yet.
+ * Vitest keeps a passing test's output to itself, so run it with --silent=false to see the summary.
  */
 
-async function seededCopy(
+/** A sample shop seeded at `seededAt` with the real Wick & Ember seed, as the app makes one. */
+async function seededSample(
   store: ReturnType<typeof memoryStore>,
-  createdAt: string,
+  seededAt: string,
   id: string,
-): Promise<Workspace> {
-  const workspace: Workspace = {
-    id,
-    kind: "demo",
-    shopName: "Wick & Ember",
-    createdAt,
-    expiresAt: null,
-    lastSweepAt: null,
-    seedVersion: seedVersionFor(createdAt),
-  };
-  const seed = buildSeed(createdAt);
-  await store.saveWorkspace(workspace);
+): Promise<Shop> {
+  // Loaded here, not at the top, so the file loads (and skips) without the seed's dependencies.
+  const { buildSeed, seedVersionFor } = await import("@/server/demo/seed");
+  const shop = sampleShop({ id, seededAt, seedVersion: seedVersionFor(seededAt) });
+  const seed = buildSeed(seededAt);
+  await store.saveShop(shop);
   for (const order of seed.orders) await store.saveOrder(id, order);
   for (const kase of seed.cases) await store.saveCase(id, kase);
   for (const [caseId, events] of Object.entries(seed.events))
     for (const e of events) await store.addEvent(id, caseId, e);
-  return workspace;
+  return shop;
 }
 
-/** One case analyzed live, then replayed in a copy made two days later; returns the summary lines. */
+/** One case analyzed live, then replayed in a sample shop seeded two days later; returns the summary lines. */
 async function check(
   caseId: string,
   run: number,
 ): Promise<{ lines: string[]; analysis: Analysis; clean: boolean; replayed: boolean }> {
   const store = memoryStore();
   const created = new Date();
-  const workspace = await seededCopy(store, created.toISOString(), `demo-live-${run}`);
+  const shop = await seededSample(
+    store,
+    created.toISOString(),
+    `sh_livesample${String(run).padStart(4, "0")}`,
+  );
   const budget = fakeBudget();
   const deps = {
     store,
@@ -68,7 +67,7 @@ async function check(
   const wall = new Map<string, number>();
   const problems: string[] = [];
   let result: Analysis | null = null;
-  for await (const event of analyzeCase({ ...deps, workspace })) {
+  for await (const event of analyzeCase({ ...deps, shop })) {
     if (event.type === "step" && event.state === "start") open.set(event.step, Date.now());
     if (event.type === "step" && event.state !== "start")
       wall.set(event.step, Date.now() - (open.get(event.step) ?? started));
@@ -95,21 +94,22 @@ async function check(
     ...(problems.length ? [`  fallbacks: ${problems.join(" | ")}`] : []),
   ];
 
-  // A copy made two days later replays the recording at its real pace, moved to its calendar, for free.
+  // A sample shop seeded two days later replays the recording at its real pace, moved to its
+  // calendar, for free.
   const later = new Date(created.getTime() + 2 * 24 * 60 * 60 * 1000);
-  const copy = await seededCopy(store, later.toISOString(), `demo-live-${run}-later`);
+  const copy = await seededSample(
+    store,
+    later.toISOString(),
+    `sh_livelater${String(run).padStart(5, "0")}`,
+  );
   const replayStart = Date.now();
   let replayed: (AnalysisEvent & { type: "result" }) | null = null;
-  for await (const event of analyzeCase({
-    ...deps,
-    workspace: copy,
-    now: () => later,
-  })) {
+  for await (const event of analyzeCase({ ...deps, shop: copy, now: () => later })) {
     if (event.type === "result") replayed = event;
   }
   lines.push(
     replayed
-      ? `  replay in a copy two days later: ${replayed.replayed ? "replayed" : "ran live"} in ${Date.now() - replayStart} ms`
+      ? `  replay in a sample shop two days later: ${replayed.replayed ? "replayed" : "ran live"} in ${Date.now() - replayStart} ms`
       : "  replay: no result",
   );
   return {
@@ -121,7 +121,7 @@ async function check(
 }
 
 describe.skipIf(!process.env.NEBIUS_API_KEY)("live on Token Factory", () => {
-  it("analyzes seeded demo cases end to end, then replays each in a later copy", async () => {
+  it("analyzes seeded sample cases end to end, then replays each in a later sample shop", async () => {
     const cases = (process.env.TRUCE_LIVE_CASE ?? "demo-damaged-28")
       .split(",")
       .map((c) => c.trim())
@@ -145,7 +145,7 @@ describe.skipIf(!process.env.NEBIUS_API_KEY || !process.env.TRUCE_LIVE_CHAT)(
   () => {
     it("answers the three questions the demo asks", async () => {
       const store = memoryStore();
-      const workspace = await seededCopy(store, new Date().toISOString(), "demo-live-chat");
+      const shop = await seededSample(store, new Date().toISOString(), "sh_livesamplechat");
       const questions = (
         process.env.TRUCE_LIVE_CHAT === "1"
           ? "Which orders are at risk this week?|Why did we lose the mug dispute?|Refund Sam and say sorry"
@@ -160,7 +160,7 @@ describe.skipIf(!process.env.NEBIUS_API_KEY || !process.env.TRUCE_LIVE_CHAT)(
         for await (const event of chatTurn({
           store,
           client: tokenFactory(),
-          workspace,
+          shop,
           budget: fakeBudget(),
           models: modelsFromEnv(),
           request: { messages: [{ role: "user", content: question }] },

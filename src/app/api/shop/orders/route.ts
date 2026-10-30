@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ShopOrderRequest, ShopOrderResponse } from "@/lib/api-types";
 import { createShopOrder } from "@/server/actions/shop";
-import { ActionError, readBody, respond } from "@/server/actions/errors";
-import { rateLimit } from "@/server/limits";
+import { readBody, respond } from "@/server/actions/errors";
+import { checkOrigin, clientIp } from "@/server/auth/guard";
+import { enforceLimit } from "@/server/limits";
 import { paypal } from "@/server/paypal";
-import { clientIp } from "@/server/session";
 import { getStore } from "@/server/store";
 
 export const dynamic = "force-dynamic";
@@ -25,14 +25,16 @@ const cartSchema: z.ZodType<ShopOrderRequest> = z.object({
 /** Creates the PayPal order for the cart, priced on the server from the catalog. */
 export async function POST(request: Request) {
   return respond(async () => {
+    checkOrigin(request);
     const body = await readBody(request, cartSchema);
     const store = getStore();
-    if (!(await rateLimit(`checkout:${clientIp(request.headers)}`, 30, 60 * 60, store))) {
-      throw new ActionError(
-        429,
-        "That's a lot of checkouts in an hour. Try again in a little while.",
-      );
-    }
+    await enforceLimit(
+      `checkout:${clientIp(request.headers)}`,
+      30,
+      60 * 60,
+      "That's a lot of checkouts in an hour. Try again in a little while.",
+      store,
+    );
     const { id, orderId } = await createShopOrder({
       store,
       paypal: paypal(),

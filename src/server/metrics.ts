@@ -15,14 +15,26 @@ import { allAnalyses } from "@/server/store/bulk";
 const DAY = 24 * 60 * 60 * 1000;
 const WEEK = 7 * DAY;
 
-/** Claims over sales in the last 90 days: PayPal's three-month view. */
-export function shopRatio(orders: Order[], cases: Case[], now: number): Metrics["ratio"] {
+/**
+ * Claims over sales in the last 90 days: PayPal's three-month view. Without the shop's sales
+ * (`salesKnown` false: Truce only sees the orders that have disputes) there's no ratio to give,
+ * so it says so rather than dividing the claims by the disputed orders alone.
+ */
+export function shopRatio(
+  orders: Order[],
+  cases: Case[],
+  now: number,
+  salesKnown = true,
+): Metrics["ratio"] {
   const since = now - 90 * DAY;
-  const sales = orders.filter((o) => inWindow(o.placedAt, since, now)).length;
   const claims = cases.filter(
     (c) => c.stage !== "inquiry" && inWindow(c.openedAt, since, now),
   ).length;
-  return { sales, claims, ...claimsRatio(sales, claims) };
+  if (!salesKnown) {
+    return { sales: 0, claims, ratio: 0, highVolume: false, headroom: 0, known: false };
+  }
+  const sales = orders.filter((o) => inWindow(o.placedAt, since, now)).length;
+  return { sales, claims, ...claimsRatio(sales, claims), known: true };
 }
 
 function inWindow(at: string, since: number, now: number): boolean {
@@ -165,6 +177,7 @@ export function computeMetrics(
   orders: Order[],
   analyses: Analysis[],
   now: number,
+  salesKnown = true,
 ): Metrics {
   const open = cases.filter((c) => c.status !== "closed");
   const monthAgo = now - 30 * DAY;
@@ -180,7 +193,7 @@ export function computeMetrics(
     kept: sum(closedRecently, (c) => c.moneyKept),
     feesAvoided: sum(closedRecently, (c) => c.feeAvoided),
     feesPaid: sum(closedRecently, (c) => c.feeCharged),
-    ratio: shopRatio(orders, cases, now),
+    ratio: shopRatio(orders, cases, now, salesKnown),
     weekly: weeklyByReason(cases, now),
     patterns: findPatterns(cases, orders, now),
     ...modelSpend(analyses),
@@ -188,16 +201,16 @@ export function computeMetrics(
 }
 
 /** Reads what the metrics need from the store, all at once. */
-export async function workspaceMetrics(
+export async function shopMetrics(
   store: Store,
-  workspaceId: string,
+  shopId: string,
   now: number,
-  loaded?: { cases?: Case[]; orders?: Order[] },
+  options: { salesKnown?: boolean; cases?: Case[]; orders?: Order[] } = {},
 ): Promise<Metrics> {
   const [cases, orders] = await Promise.all([
-    loaded?.cases ?? store.listCases(workspaceId),
-    loaded?.orders ?? store.listOrders(workspaceId),
+    options.cases ?? store.listCases(shopId),
+    options.orders ?? store.listOrders(shopId),
   ]);
-  const analyses = await allAnalyses(store, workspaceId, cases);
-  return computeMetrics(cases, orders, analyses, now);
+  const analyses = await allAnalyses(store, shopId, cases);
+  return computeMetrics(cases, orders, analyses, now, options.salesKnown ?? true);
 }

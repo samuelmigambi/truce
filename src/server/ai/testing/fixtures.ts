@@ -1,15 +1,120 @@
-import type { Address, Case, CaseEvent, Order, Tracking, Workspace } from "@/lib/domain";
+import { POLICIES } from "@/lib/catalog";
+import type {
+  Address,
+  Case,
+  CaseEvent,
+  Order,
+  PayPalConnection,
+  PayPalEnvironment,
+  Shop,
+  ShopMember,
+  Tracking,
+} from "@/lib/domain";
+import { DEFAULT_NOTIFICATIONS } from "@/lib/shop-options";
 import type { Store } from "@/server/store/types";
 
 /**
- * A small Wick & Ember world for the agent's tests, shaped like the demo seed: four open cases,
+ * A small Wick & Ember world for the agent's tests, shaped like the sample seed: four open cases,
  * two closed ones (the lost mug dispute and a settled size complaint) and two orders to ship.
- * Every date hangs from `anchor`, so a copy made `days` later is the same world moved in time.
+ * Every date hangs from `anchor`, so a sample shop seeded `days` later is the same world moved in
+ * time. The same world can be put in a real shop instead (see realShop), to show what changes
+ * when the shop is the seller's own.
  */
 
 export const ANCHOR = Date.parse("2026-10-28T00:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
+
+const OWNER: Omit<ShopMember, "joinedAt"> = {
+  uid: "u_owner",
+  role: "owner",
+  email: "owner@example.com",
+  name: "Robin Hale",
+  notifications: DEFAULT_NOTIFICATIONS,
+};
+
+/** A PayPal connection as a connected real shop holds it: no secret, a made-up public client ID. */
+export function paypalConnection(environment: PayPalEnvironment = "sandbox"): PayPalConnection {
+  const at = "2026-09-14T09:40:00.000Z";
+  return {
+    environment,
+    clientId: "AZtestClientId0000000000000000000",
+    clientIdHash: "0".repeat(64),
+    appId: "APP-TEST",
+    features: { disputes: true, respond: true, transactions: true, tracking: true, webhooks: true },
+    webhook: { status: "skipped", id: null, url: null, note: "The site isn't public." },
+    connectedAt: at,
+    checkedAt: at,
+    health: "ok",
+    problem: null,
+  };
+}
+
+/**
+ * A real shop in Sydney that prices in Australian dollars and connects its own PayPal sandbox
+ * app. Its days start eleven hours before UTC's, so an evening delivery in UTC lands on its next
+ * day.
+ */
+export function realShop(overrides: Partial<Shop> = {}): Shop {
+  const at = "2026-09-14T09:30:00.000Z";
+  return {
+    id: "sh_saltbushcandle01",
+    kind: "real",
+    status: "ready",
+    setupStep: "review",
+    name: "Saltbush Candle Co.",
+    website: "https://saltbushcandles.com.au",
+    currency: "AUD",
+    timeZone: "Australia/Sydney",
+    sells: "Hand-poured soy candles",
+    policies: { shipping: { text: "", url: null }, returns: { text: "", url: null } },
+    ownerUid: OWNER.uid,
+    members: { [OWNER.uid]: { ...OWNER, joinedAt: at } },
+    memberIds: [OWNER.uid],
+    paypal: paypalConnection("sandbox"),
+    orderHistory: "full",
+    createdAt: at,
+    updatedAt: at,
+    readyAt: at,
+    lastSyncAt: at,
+    lastSweepAt: null,
+    seedVersion: null,
+    seededAt: null,
+    ...overrides,
+  };
+}
+
+/** A Wick & Ember sample shop, seeded at `seededAt` with the seed `seedVersion`. */
+export function sampleShop(opts: { id: string; seededAt: string; seedVersion: string }): Shop {
+  const { id, seededAt, seedVersion } = opts;
+  return {
+    id,
+    kind: "sample",
+    status: "ready",
+    setupStep: "review",
+    name: "Wick & Ember",
+    website: null,
+    currency: "USD",
+    timeZone: "America/Los_Angeles",
+    sells: "Small-batch candles, poured by hand in Portland, Oregon",
+    policies: {
+      shipping: { text: POLICIES.shipping.join(" "), url: null },
+      returns: { text: POLICIES.returns.join(" "), url: null },
+    },
+    ownerUid: OWNER.uid,
+    members: { [OWNER.uid]: { ...OWNER, joinedAt: seededAt } },
+    memberIds: [OWNER.uid],
+    paypal: null,
+    orderHistory: "full",
+    createdAt: seededAt,
+    updatedAt: seededAt,
+    readyAt: seededAt,
+    lastSyncAt: null,
+    lastSweepAt: null,
+    seedVersion,
+    seededAt,
+  };
+}
 
 const home = (
   line1: string,
@@ -30,15 +135,11 @@ export function world(days = 0) {
   const anchor = ANCHOR + days * DAY;
   const at = (daysAgo: number, hour: number) =>
     new Date(anchor - daysAgo * DAY + hour * HOUR).toISOString();
-  const workspace: Workspace = {
-    id: days ? `demo-later-${days}` : "demo-test",
-    kind: "demo",
-    shopName: "Wick & Ember",
-    createdAt: new Date(anchor + 15 * HOUR + 55 * 60_000).toISOString(),
-    expiresAt: null,
-    lastSweepAt: null,
+  const shop = sampleShop({
+    id: `sh_wickandember${String(days).padStart(4, "0")}`,
+    seededAt: new Date(anchor + 15 * HOUR + 55 * 60_000).toISOString(),
     seedVersion: `wick-ember-1@${new Date(anchor).toISOString().slice(0, 10)}`,
-  };
+  });
   const now = new Date(anchor + 16 * HOUR);
 
   const sam = home("1400 J St", "Sacramento", "CA", "95814", "Apt 512");
@@ -404,16 +505,17 @@ export function world(days = 0) {
     ],
   };
 
-  return { workspace, now, orders, cases, events };
+  return { shop, now, orders, cases, events };
 }
 
-/** A store holding `world(days)`. */
-export async function seeded(store: Store, days = 0) {
+/** A store holding `world(days)`, in its sample shop or in `shop` (such as a realShop()). */
+export async function seeded(store: Store, days = 0, shop?: Shop) {
   const w = world(days);
-  await store.saveWorkspace(w.workspace);
-  for (const order of w.orders) await store.saveOrder(w.workspace.id, order);
-  for (const kase of w.cases) await store.saveCase(w.workspace.id, kase);
+  const target = shop ?? w.shop;
+  await store.saveShop(target);
+  for (const order of w.orders) await store.saveOrder(target.id, order);
+  for (const kase of w.cases) await store.saveCase(target.id, kase);
   for (const [caseId, list] of Object.entries(w.events))
-    for (const e of list) await store.addEvent(w.workspace.id, caseId, e);
-  return w;
+    for (const e of list) await store.addEvent(target.id, caseId, e);
+  return { ...w, shop: target };
 }

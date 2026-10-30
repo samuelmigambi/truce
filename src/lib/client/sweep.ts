@@ -1,13 +1,15 @@
 "use client";
 
 import type { SweepEvent } from "@/lib/api-types";
-import { mutate } from "swr";
 import { readEvents } from "@/lib/sse";
-import { errorMessage, openStream } from "./api";
-import { refreshAll } from "./hooks";
+import { errorMessage, openStream, shopApi } from "./api";
+import { refreshShop } from "./hooks";
 import { createStore, useStore } from "./store";
 
-/** The overnight check, run now: progress and a live log from the SweepEvent stream. */
+/**
+ * The overnight check, run now: progress and a live log from the SweepEvent stream, one per
+ * shop, so a check keeps running while the seller moves around that shop.
+ */
 
 export type SweepLine =
   | { id: string; kind: "case"; caseId: string; summary: string }
@@ -36,8 +38,12 @@ const IDLE: SweepState = {
   endedAt: null,
 };
 
-const sweep = createStore<SweepState>(IDLE);
+const sweeps = createStore<Record<string, SweepState>>({});
 let counter = 0;
+
+function setSweep(shopId: string, update: (state: SweepState) => SweepState) {
+  sweeps.set((all) => ({ ...all, [shopId]: update(all[shopId] ?? IDLE) }));
+}
 
 function reduce(state: SweepState, event: SweepEvent): SweepState {
   const id = `s${counter++}`;
@@ -81,16 +87,16 @@ function reduce(state: SweepState, event: SweepEvent): SweepState {
   }
 }
 
-export function startSweep() {
-  if (sweep.get().status === "running") return;
-  sweep.set({ ...IDLE, status: "running", startedAt: Date.now() });
+export function startSweep(shopId: string) {
+  if (sweeps.get()[shopId]?.status === "running") return;
+  setSweep(shopId, () => ({ ...IDLE, status: "running", startedAt: Date.now() }));
   void (async () => {
     try {
-      const response = await openStream("/api/sweep", {});
+      const response = await openStream(shopApi(shopId, "sweep"), {});
       for await (const event of readEvents<SweepEvent>(response)) {
-        sweep.set((state) => reduce(state, event));
+        setSweep(shopId, (state) => reduce(state, event));
       }
-      sweep.set((state) =>
+      setSweep(shopId, (state) =>
         state.status === "running"
           ? {
               ...state,
@@ -101,25 +107,24 @@ export function startSweep() {
           : state,
       );
     } catch (error) {
-      sweep.set((state) => ({
+      setSweep(shopId, (state) => ({
         ...state,
         status: "error",
         error: errorMessage(error),
         endedAt: Date.now(),
       }));
     } finally {
-      void refreshAll();
-      // The workspace records when the check last ran.
-      void mutate("/api/session");
+      // The shop records when the check last ran; the cases and orders may have changed too.
+      void refreshShop(shopId);
     }
   })();
 }
 
-export function dismissSweep() {
-  if (sweep.get().status === "running") return;
-  sweep.set(IDLE);
+export function dismissSweep(shopId: string) {
+  if (sweeps.get()[shopId]?.status === "running") return;
+  setSweep(shopId, () => IDLE);
 }
 
-export function useSweep(): SweepState {
-  return useStore(sweep);
+export function useSweep(shopId: string): SweepState {
+  return useStore(sweeps, (all) => all[shopId] ?? IDLE);
 }

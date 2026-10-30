@@ -1,8 +1,8 @@
 import "server-only";
 
 import { z } from "zod";
-import type { Recommendation, Verification } from "@/lib/domain";
-import { formatUsd, toCents, type Cents } from "@/lib/money";
+import type { CurrencyCode, Recommendation, Verification } from "@/lib/domain";
+import { formatMoney, toCents, type Cents } from "@/lib/money";
 import type { CitedSentence } from "../citations";
 import { evidenceBlock, MOVE_LABEL, TO_BUYER, verifySystem, type PromptRecord } from "../prompts";
 import { askForJson } from "../structured";
@@ -83,14 +83,60 @@ export function allowedAmounts(run: Run, recommendation: Recommendation): Set<Ce
   return amounts;
 }
 
-/** What code can check for sure, by sentence number: amounts, tracking numbers and cited IDs. */
 const ABOUT_THE_BUYER = /\bthe (buyer|customer|purchaser)('s|s)?\b/i;
 const STOCK_PHRASES =
   /\b(we )?(sincerely )?apologi[sz]e for (any|the) inconvenience\b|\bsorry for (any|the) inconvenience\b|\bthank you for your (understanding|patience) in this matter\b/i;
 
+/** The marks a draft may write money with, longest first, and the currencies each can stand for. */
+const MONEY_MARKS: [string, CurrencyCode[]][] = [
+  ["US$", ["USD"]],
+  ["CA$", ["CAD"]],
+  ["AU$", ["AUD"]],
+  ["C$", ["CAD"]],
+  ["A$", ["AUD"]],
+  ["$", ["USD", "CAD", "AUD"]],
+  ["£", ["GBP"]],
+  ["€", ["EUR"]],
+  ["USD", ["USD"]],
+  ["CAD", ["CAD"]],
+  ["AUD", ["AUD"]],
+  ["GBP", ["GBP"]],
+  ["EUR", ["EUR"]],
+];
+const MARK_CURRENCIES = new Map(MONEY_MARKS);
+const MARK = MONEY_MARKS.map(([mark]) => mark.replaceAll("$", "\\$")).join("|");
+const NUMBER = String.raw`(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?`;
+/** "$86", "A$4.30", "£86", "€1,200", or the mark after the number: "86 €", "86 EUR". */
+const AMOUNT = new RegExp(
+  String.raw`(?<![\p{L}\d])(${MARK})\s?${NUMBER}|${NUMBER}\s?(€|£|(?:USD|CAD|AUD|GBP|EUR)\b)`,
+  "gu",
+);
+
+/** Every amount written in a sentence, in cents, with the mark it was written with. */
+export function amountsIn(sentence: string): { text: string; cents: Cents; mark: string }[] {
+  return [...sentence.matchAll(AMOUNT)].map((m) => {
+    const [mark, whole, fraction] = m[1] ? [m[1], m[2], m[3]] : [m[6], m[4], m[5]];
+    return {
+      text: m[0].trim(),
+      cents: toCents(`${whole!.replaceAll(",", "")}${fraction ?? ""}`),
+      mark: mark!,
+    };
+  });
+}
+
+/**
+ * What code can check for sure, by sentence number: amounts (in the shop's currency, and in the
+ * records), tracking numbers, cited IDs and the voice.
+ */
 export function codeChecks(
   sentences: CitedSentence[],
-  facts: { ids: Set<string>; amounts: Set<Cents>; tracking: string | null; toBuyer?: boolean },
+  facts: {
+    ids: Set<string>;
+    amounts: Set<Cents>;
+    tracking: string | null;
+    currency: CurrencyCode;
+    toBuyer?: boolean;
+  },
 ): Map<number, string> {
   const problems = new Map<number, string>();
   sentences.forEach((s, i) => {
@@ -102,10 +148,15 @@ export function codeChecks(
     if (STOCK_PHRASES.test(s.sentence)) issues.push("uses a stock phrase instead of plain words");
     const unknown = s.evidence.filter((id) => !facts.ids.has(id));
     if (unknown.length) issues.push(`cites ${unknown.join(", ")}, which isn't in the case file`);
-    for (const m of s.sentence.matchAll(/\$\s?(\d{1,3}(?:,\d{3})+|\d+)(\.\d{2})?/g)) {
-      const cents = toCents(`${m[1]!.replaceAll(",", "")}${m[2] ?? ""}`);
-      if (!facts.amounts.has(cents))
-        issues.push(`mentions ${formatUsd(cents)}, which isn't an amount in the records`);
+    for (const amount of amountsIn(s.sentence)) {
+      if (!MARK_CURRENCIES.get(amount.mark)?.includes(facts.currency))
+        issues.push(
+          `writes ${amount.text}, which isn't in the shop's currency (${facts.currency})`,
+        );
+      else if (!facts.amounts.has(amount.cents))
+        issues.push(
+          `mentions ${formatMoney(amount.cents, facts.currency)}, which isn't an amount in the records`,
+        );
     }
     for (const m of s.sentence.matchAll(/\b\d[\d ]{9,}\d\b/g)) {
       const digits = m[0].replaceAll(" ", "");
@@ -154,6 +205,8 @@ async function check(
   recommendation: Recommendation,
 ) {
   const model = run.deps.models.decide;
+  const { shop } = run.deps;
+  const money = (cents: Cents) => formatMoney(cents, shop.currency);
   const ids = new Set(records.map((r) => r.id));
   const amounts = allowedAmounts(run, recommendation);
   const numbered = drafted.sentences
@@ -166,10 +219,10 @@ async function check(
     ? `This draft goes to the buyer, ${run.kase.buyer.name}: it must speak to them as "you".`
     : "This draft goes to PayPal's reviewer: it may refer to the buyer as the buyer.";
   const content = [
-    `The seller's move: ${MOVE_LABEL[recommendation.move]}.${recommendation.offerAmount ? ` The offer: ${formatUsd(recommendation.offerAmount)}.` : ""}`,
+    `The seller's move: ${MOVE_LABEL[recommendation.move]}.${recommendation.offerAmount ? ` The offer: ${money(recommendation.offerAmount)}.` : ""}`,
     audience,
-    `Amounts that appear in the records: ${[...amounts].map(formatUsd).join(", ")}.`,
-    `Evidence records:\n${evidenceBlock(records)}`,
+    `Amounts that appear in the records, in the shop's currency: ${[...amounts].map(money).join(", ")}.`,
+    `Evidence records:\n${evidenceBlock(records, shop.timeZone)}`,
     `The draft, one sentence per line, with the drafter's citations in brackets:\n${numbered}`,
     "Check every sentence and record the results.",
   ].join("\n\n");
@@ -195,6 +248,7 @@ async function check(
     ids,
     amounts,
     tracking: run.order?.tracking?.number ?? null,
+    currency: shop.currency,
     toBuyer,
   });
   return {

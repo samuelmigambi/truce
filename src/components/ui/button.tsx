@@ -12,14 +12,14 @@ const base =
   "active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45 aria-disabled:pointer-events-none aria-disabled:opacity-45";
 
 const variants: Record<ButtonVariant, string> = {
-  primary: "bg-ink text-cream hover:bg-[#2d3820]",
+  primary: "bg-lemon text-ink hover:bg-lemon-deep",
   secondary:
-    "border border-line bg-paper text-ink shadow-[0_1px_0_rgb(30_38_20/0.04)] hover:border-line-strong hover:bg-[#fdfdf8]",
+    "border border-line bg-paper text-ink shadow-[0_1px_0_rgb(30_38_20/0.04)] hover:border-line-strong hover:bg-paper-hover",
   lemon: "bg-lemon text-ink hover:bg-lemon-deep",
   ghost: "text-ink-2 hover:bg-wash hover:text-ink",
   danger: "border border-risk-200 bg-paper text-risk-700 hover:bg-risk-50",
-  /** For ink backgrounds. */
-  inverse: "border border-cream/20 text-cream hover:border-cream/35 hover:bg-cream/10",
+  /** For the brand's always-dark areas. */
+  inverse: "border border-chalk/20 text-chalk hover:border-chalk/35 hover:bg-chalk/10",
 };
 
 const sizes: Record<ButtonSize, string> = {
@@ -112,7 +112,8 @@ export function IconButton({
       type={type}
       aria-label={label}
       title={label}
-      className={cn(base, variants[variant], iconSizes[size], "px-0", className)}
+      // Never squeezed by a long title beside it: the icon button stays square.
+      className={cn(base, variants[variant], iconSizes[size], "shrink-0 px-0", className)}
       {...props}
     >
       {children}

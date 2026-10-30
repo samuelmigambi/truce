@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatEvent } from "@/lib/api-types";
+import type { Shop } from "@/lib/domain";
 import { ToolInputError } from "../loop";
+import { chatSystem } from "../prompts";
 import {
   fakeAi,
   fakeBudget,
@@ -12,11 +14,13 @@ import {
   toolCallChunks,
   type AiHandlers,
 } from "../testing/fakes";
-import { seeded } from "../testing/fixtures";
+import { ANCHOR, paypalConnection, realShop, seeded, world } from "../testing/fixtures";
 import { chatTurn, matchCases, type ChatDeps } from "./index";
 import {
   claimsRatioTool,
   explainOutcome,
+  getCase,
+  listCases,
   ordersAtRisk,
   prepareAction,
   type ChatContext,
@@ -29,14 +33,14 @@ const MODELS = {
   embed: "Qwen/Qwen3-Embedding-8B",
 };
 
-async function setup(handlers: AiHandlers = {}) {
+async function setup(handlers: AiHandlers = {}, shop?: Shop) {
   const store = memoryStore();
-  const w = await seeded(store);
+  const w = await seeded(store, 0, shop);
   const ai = fakeAi({ embed: reasonEmbeddings, ...handlers });
   const budget = fakeBudget();
   const context: ChatContext = {
     store,
-    workspace: w.workspace,
+    shop: w.shop,
     client: ai.client,
     models: MODELS,
     now: w.now,
@@ -46,7 +50,7 @@ async function setup(handlers: AiHandlers = {}) {
   const deps = (question: string, extra: Partial<ChatDeps> = {}): ChatDeps => ({
     store,
     client: ai.client,
-    workspace: w.workspace,
+    shop: w.shop,
     budget,
     models: MODELS,
     request: { messages: [{ role: "user", content: question }] },
@@ -80,13 +84,14 @@ describe("chat tools", () => {
     const content = result.content as {
       atRisk: { order: string; draftedNote: string | null; problems: string[] }[];
       clear: string[];
-      casesDueWithinDays: { cases: { case: string }[] };
+      casesDueWithinDays: { cases: { buyer: string }[] };
     };
     expect(content.atRisk.map((o) => o.order)).toEqual(["W-1102"]);
     expect(content.atRisk[0]!.problems[0]).toMatch(/differs from PayPal's/);
     expect(content.atRisk[0]!.draftedNote).toMatch(/update the shipping address in PayPal/);
     expect(content.clear).toEqual(["W-1101"]);
-    expect(content.casesDueWithinDays.cases.map((c) => c.case)).toEqual(["demo-inr-64"]);
+    // Cases are named by their buyer: the internal ID isn't something to show a seller.
+    expect(content.casesDueWithinDays.cases.map((c) => c.buyer)).toEqual(["Chris Park"]);
     expect(result.cards).toEqual([{ kind: "order", orderId: "W-1102" }]);
     expect(result.label).toBe("1 order at risk");
   });
@@ -102,7 +107,7 @@ describe("chat tools", () => {
     };
     expect(content.case).toBe("demo-mug-dispute");
     expect(content.summary).toBe(
-      "2 × Ember mug candle, item not as described: lost, $56 refunded and a $15 fee.",
+      "2 × Ember mug candle, item not as described: lost, $56 refunded and a fee of $15.",
     );
     expect(content.timeline.join(" ")).toMatch(/No photos of the mugs or of the packing/);
     expect(content.paypalSaid[0]).toMatch(/<untrusted source="paypal">/);
@@ -163,7 +168,7 @@ describe("chat tools", () => {
       text: "Hi Sam, USPS shows it was delivered on Oct 24.",
       evidenceIds: ["E3"],
     };
-    await store.saveAnalysis(w.workspace.id, {
+    await store.saveAnalysis(w.shop.id, {
       caseId: "demo-inr-86",
       recommendation: {
         move: "fight",
@@ -180,7 +185,7 @@ describe("chat tools", () => {
 
 describe("chatTurn", () => {
   it("streams text, tool chips and the action card, and never sends anything", async () => {
-    const { deps, budget } = await setup({
+    const { deps, budget, w } = await setup({
       stream: (body, n) =>
         n === 1
           ? toolCallChunks([
@@ -210,7 +215,7 @@ describe("chatTurn", () => {
       label: "Ready for your approval: Refund Sam Rivera $86",
     });
     expect(budget.spent).toBeGreaterThan(0);
-    expect(budget.rateKeys).toEqual(["chat:demo-test"]);
+    expect(budget.rateKeys).toEqual([`chat:${w.shop.id}`]);
   });
 
   it("shows each card once and reports embedding costs from tools", async () => {
@@ -300,7 +305,7 @@ describe("chatTurn", () => {
     expect(events).toEqual([
       {
         type: "error",
-        message: expect.stringMatching(/asked 60 questions in this demo copy today/),
+        message: expect.stringMatching(/This shop has asked Truce 60 questions today/),
       },
     ]);
   });
@@ -311,5 +316,83 @@ describe("chatTurn", () => {
       chatTurn({ ...deps("Hi"), request: { messages: [{ role: "assistant", content: "Hello" }] } }),
     );
     expect(events).toEqual([{ type: "error", message: "Ask a question to start." }]);
+  });
+});
+
+describe("Ask Truce in each kind of shop", () => {
+  it("says what approving does in this shop", () => {
+    const line = (shop: Shop) =>
+      chatSystem({ shop, now: new Date(ANCHOR), caseLine: null }).split("\n\n")[1];
+    expect(line(world().shop)).toBe(
+      "This is a sample shop: approved actions are simulated, and the app says so. Nothing reaches PayPal or a buyer.",
+    );
+    expect(line(realShop())).toBe(
+      "This shop is connected to PayPal's sandbox: approved actions call PayPal's sandbox, where no real money moves.",
+    );
+    expect(line(realShop({ paypal: paypalConnection("live") }))).toBe(
+      "This shop is connected to PayPal: approved actions call PayPal for real.",
+    );
+    expect(line(realShop({ paypal: null }))).toMatch(
+      /^This shop isn't connected to PayPal yet: you can prepare actions, but approved ones can't be sent until the seller connects PayPal in settings\./,
+    );
+  });
+
+  it("writes a real shop's amounts in its currency and its dates on its calendar", async () => {
+    const { context } = await setup({}, realShop());
+    const list = await listCases.run({ filter: "open" }, context);
+    const rows = (list.content as { cases: { buyer: string; amount: string }[] }).cases;
+    expect(rows.find((c) => c.buyer === "Sam Rivera")?.amount).toBe("A$86");
+    // Sam opened the case at 5 PM UTC on Oct 26: 4 AM on Oct 27 in Sydney.
+    const sam = await getCase.run({ case: "Sam" }, context);
+    expect(sam.content).toMatchObject({ opened: "Oct 27, 2026", amount: "A$86" });
+    const refund = await prepareAction.run({ case: "Sam", move: "refund" }, context);
+    const card = refund.card as { label: string; draft: { text: string } };
+    expect(card.label).toBe("Refund Sam Rivera A$86");
+    expect(card.draft.text).toContain("We're refunding the full A$86 to your PayPal account.");
+    expect(card.draft.text).toMatch(/Warm regards,\nSaltbush Candle Co\.$/);
+    const ratio = await claimsRatioTool.run({}, context);
+    expect((ratio.content as { meaning: string }).meaning).toMatch(/the A\$30 high-volume fee/);
+    const mug = await explainOutcome.run({ case: "mug" }, context);
+    expect(mug.content).toMatchObject({
+      summary:
+        "2 × Ember mug candle, item not as described: lost, A$56 refunded and a fee of A$15.",
+      money: { feeCharged: "A$15" },
+    });
+  });
+
+  it("says the claims ratio is unknown without the shop's sales history", async () => {
+    const { context } = await setup({}, realShop({ orderHistory: "disputes" }));
+    const result = await claimsRatioTool.run({}, context);
+    expect(result.content).toMatchObject({
+      ratio: "unknown",
+      sales: "unknown",
+      claims: 1,
+      overTheLine: false,
+      meaning: expect.stringMatching(
+        /^The claims ratio is unknown: the shop's sales history isn't available/,
+      ),
+    });
+    expect(result.card).toEqual({
+      kind: "metric",
+      label: "Claims ratio, last 90 days",
+      value: "Unknown",
+    });
+    expect(result.label).toBe("Claims ratio unknown without the sales history");
+  });
+
+  it("puts the shop, its PayPal connection and its calendar in a turn's system prompt", async () => {
+    const { deps, ai, budget } = await setup(
+      { stream: () => textChunks("Two cases need you this week.") },
+      realShop(),
+    );
+    await collect(chatTurn(deps("What needs me this week?")));
+    const system = systemText(ai.requests[0]!);
+    expect(system).toMatch(
+      /^You are Truce, the assistant inside Saltbush Candle Co\.'s PayPal disputes app/,
+    );
+    expect(system).toContain("connected to PayPal's sandbox");
+    expect(system).toContain("- Currency: Australian dollar (AUD); amounts are written like A$86");
+    expect(system).toContain("Today is Oct 29, 2026 in the shop's time zone.");
+    expect(budget.rateKeys).toEqual(["chat:sh_saltbushcandle01"]);
   });
 });

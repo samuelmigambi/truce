@@ -10,14 +10,17 @@ import { deadline } from "../events";
 import { requestOptions, runAgent, ThinkFilter, type Tool, type ToolResult } from "../loop";
 import { reasoningParams } from "../models";
 import { caseBlock, gatherSystem, orderLine, photoSystem, type PromptRecord } from "../prompts";
-import { fence } from "../safety";
+import { clean, fence } from "../safety";
+import { bounded, findListing, publicBase, siteOf } from "../web";
 import * as R from "./evidence";
 import { failureReason, TIMEOUTS } from "./run";
 import type { Run } from "./types";
 
 /**
  * Gathering on Lightning with tools: the model picks the sources that matter for this kind of
- * dispute and calls them side by side, and each tool writes records from the shop's data. Super VL
+ * dispute and calls them side by side, and each tool writes records from the shop's own data. A
+ * sample shop's listings and policies come from its catalog, checked against its pages on this
+ * site; a real shop's come only from its own website and settings, never the catalog. Super VL
  * reads the buyer's photos and Qwen3 embeddings find similar closed cases along the way. Whatever
  * a dispute of this kind always needs is added by code if the model skipped it, so the file is
  * complete either way.
@@ -31,66 +34,30 @@ export interface Gathered {
   similarFailed: boolean;
 }
 
+type Page = { url: string; content: string };
+
 interface State {
   run: Run;
   records: R.NewRecord[];
   done: Map<string, string>;
-  pages: Map<string, Promise<{ url: string; content: string } | null>>;
+  pages: Map<string, Promise<Page | null>>;
   similar: SimilarCase[];
   similarFailed: boolean;
   photos: { caption: string; dataUrl: string }[];
 }
 
+type Produced = { records: R.NewRecord[]; label: string };
+
 const NO_INPUT = z.object({});
 const PolicyInput = z.object({ topic: z.enum(["shipping", "returns"]) });
 
-const PRIVATE_IPV4 = [
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^169\.254\./,
-  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
-  /^0\./,
-];
-
-/** Whether Tavily's servers could reach this host: not this machine, a private network or a bare name. */
-function isPublicHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (host.includes(":")) return !(host === "::1" || /^(fc|fd|fe8|fe9|fea|feb)/.test(host));
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return !PRIVATE_IPV4.some((range) => range.test(host));
-  if (!host.includes(".")) return false;
-  return !/\.(localhost|local|internal|lan|home|test|example)$/.test(host);
-}
-
-/**
- * The site's public origin for Tavily, or null when it isn't public (local development), so the
- * listing comes from the catalog straight away instead of waiting on a page Tavily can't reach.
- */
-export function publicBase(siteUrl: string | null | undefined): string | null {
-  if (!siteUrl) return null;
-  try {
-    const url = new URL(siteUrl);
-    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    return isPublicHost(url.hostname) ? url.origin : null;
-  } catch {
-    return null;
-  }
-}
-
-/** A page read gives up after this, and the record falls back to the catalog, saying so. */
-export const PAGE_MS = 7_000;
-
-function readPage(state: State, path: string): Promise<{ url: string; content: string } | null> {
-  const base = publicBase(state.run.deps.siteUrl);
+/** One page read through Tavily, at most once per analysis, given up on when its time is up. */
+function readUrl(state: State, url: string): Promise<Page | null> {
   const web = state.run.deps.web;
-  if (!base || !web) return Promise.resolve(null);
-  const url = `${base}${path}`;
+  if (!web || !publicBase(url)) return Promise.resolve(null);
   let page = state.pages.get(url);
   if (!page) {
-    // The reader aborts its own request at PAGE_MS too; this race is the backstop.
-    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), PAGE_MS + 500));
-    page = Promise.race([
+    page = bounded(
       web
         .extract([url])
         .then((pages) => pages.find((p) => p.content.trim()) ?? null)
@@ -98,24 +65,39 @@ function readPage(state: State, path: string): Promise<{ url: string; content: s
           console.error("[analysis] couldn't read", url, error);
           return null;
         }),
-      timeout,
-    ]);
+      null,
+    );
     state.pages.set(url, page);
   }
   return page;
+}
+
+/** One of the sample shop's own pages on this site (SITE_URL), such as its policies. */
+function readSamplePage(state: State, path: string): Promise<Page | null> {
+  const base = publicBase(state.run.deps.siteUrl);
+  return base ? readUrl(state, `${base}${path}`) : Promise.resolve(null);
+}
+
+/** "wickandember.com" from "https://www.wickandember.com/shop", for labels. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 /** Runs a source once per analysis; a second call says it's already in the file. */
 async function once(
   state: State,
   key: string,
-  produce: () => Promise<{ records: R.NewRecord[]; label: string }>,
+  produce: () => Promise<Produced>,
 ): Promise<ToolResult> {
   const previous = state.done.get(key);
   if (previous !== undefined)
     return { content: { note: "Already in the case file." }, label: previous };
   state.done.set(key, "");
-  let produced: { records: R.NewRecord[]; label: string };
+  let produced: Produced;
   try {
     produced = await produce();
   } catch (error) {
@@ -134,7 +116,7 @@ async function once(
             summary: r.untrusted ? fence(r.untrusted, r.summary, 600) : r.summary,
           })),
         }
-      : { added: [], note: "Nothing on file for this." },
+      : { added: [], note: `${label}. Nothing was added to the case file.` },
     label,
   };
 }
@@ -150,7 +132,7 @@ const orderTool: Tool<Record<string, never>, State> = {
       const order = state.run.order;
       if (!order) return { records: [], label: "No order on file" };
       return {
-        records: R.orderRecords(order, state.run.deps.workspace.shopName),
+        records: R.orderRecords(order, state.run.deps.shop),
         label: `Order ${order.id} and its PayPal payment`,
       };
     }),
@@ -164,17 +146,91 @@ const trackingTool: Tool<Record<string, never>, State> = {
   pending: "Checking tracking",
   run: (_input, state) =>
     once(state, "tracking", async () => {
-      const record = state.run.order ? R.trackingRecord(state.run.order) : null;
-      const t = state.run.order?.tracking;
+      const { order, deps } = state.run;
+      const record = order ? R.trackingRecord(order, deps.shop.timeZone) : null;
+      const t = order?.tracking;
       if (!record || !t) return { records: [], label: "No tracking on file" };
       return {
         records: [record],
         label: t.deliveredAt
-          ? `${t.carrier}: delivered ${formatDay(t.deliveredAt)}`
-          : `${t.carrier}: no delivery scan`,
+          ? `${t.carrier}: delivered ${formatDay(t.deliveredAt, deps.shop.timeZone)}`
+          : t.events?.length
+            ? `${t.carrier}: no delivery scan`
+            : `${t.carrier}: tracking number only, no scans`,
       };
     }),
 };
+
+/** The sample shop's listings: its catalog, checked against its product pages on this site. */
+async function sampleListing(state: State): Promise<Produced> {
+  const products = [...new Set(state.run.order?.items.map((i) => i.productId) ?? [])]
+    .map((id) => productById(id))
+    .filter((p) => p !== undefined)
+    .slice(0, 3);
+  if (products.length === 0) return { records: [], label: "No listing found" };
+  const records = await Promise.all(
+    products.map(async (p) =>
+      R.listingRecord(
+        p,
+        await readSamplePage(state, `/shop/products/${p.slug}`),
+        state.run.deps.shop.name,
+      ),
+    ),
+  );
+  const live = records.some((r) => r.source.startsWith("http"));
+  return {
+    records,
+    label: live ? "Listing read from the live shop page" : "Listing from the catalog copy",
+  };
+}
+
+/** What an order says when PayPal named no items: nothing to look up on the shop's site. */
+const NO_ITEM_NAME = /^paypal (payment|purchase)$/i;
+
+/** The ordered items' names worth searching the shop's site for, at most three. */
+function itemNames(state: State): string[] {
+  const names = state.run.order?.items.map((i) => i.name.trim()) ?? [];
+  return [...new Set(names.filter((name) => name && !NO_ITEM_NAME.test(name)))].slice(0, 3);
+}
+
+/**
+ * A real shop's listings, from its own website only: Tavily searches that site for each ordered
+ * item's name (up to three) and reads the best page. No website, a site Tavily can't reach, or
+ * nothing found means no listing record, and the label says which.
+ */
+async function siteListing(state: State): Promise<Produced> {
+  const { shop, web } = state.run.deps;
+  if (!shop.website) return { records: [], label: "No website on file" };
+  const site = siteOf(shop.website);
+  if (!site)
+    return {
+      records: [],
+      label: `${hostOf(shop.website)} isn't a public site, so no listing was read`,
+    };
+  if (!web)
+    return {
+      records: [],
+      label: `Web reading isn't set up here, so no listing was read from ${site.domain}`,
+    };
+  const names = itemNames(state);
+  if (names.length === 0)
+    return { records: [], label: `The order names no items to look up on ${site.domain}` };
+  const reads = await Promise.all(names.map((name) => findListing(web, site, name)));
+  const seen = new Set<string>();
+  const records = reads.flatMap((read, i) => {
+    if (!read.page || seen.has(read.page.url)) return [];
+    seen.add(read.page.url);
+    const record = R.siteListingRecord(names[i]!, read.page, site.domain);
+    return record ? [record] : [];
+  });
+  if (records.length) return { records, label: `Listing read from ${site.domain}` };
+  return {
+    records: [],
+    label: reads.some((r) => r.reached)
+      ? `No listing found on ${site.domain}`
+      : `Couldn't reach ${site.domain} just now, so no listing was read`,
+  };
+}
 
 const listingTool: Tool<Record<string, never>, State> = {
   name: "listing",
@@ -183,24 +239,43 @@ const listingTool: Tool<Record<string, never>, State> = {
   input: NO_INPUT,
   pending: "Reading the listing",
   run: (_input, state) =>
-    once(state, "listing", async () => {
-      const products = [...new Set(state.run.order?.items.map((i) => i.productId) ?? [])]
-        .map((id) => productById(id))
-        .filter((p) => p !== undefined)
-        .slice(0, 3);
-      if (products.length === 0) return { records: [], label: "No listing found" };
-      const records = await Promise.all(
-        products.map(async (p) =>
-          R.listingRecord(p, await readPage(state, `/shop/products/${p.slug}`)),
-        ),
-      );
-      const live = records.some((r) => r.source.startsWith("http"));
-      return {
-        records,
-        label: live ? "Listing read from the live shop page" : "Listing from the catalog copy",
-      };
-    }),
+    once(state, "listing", () =>
+      state.run.deps.shop.kind === "sample" ? sampleListing(state) : siteListing(state),
+    ),
 };
+
+const TOPIC_LABEL = { shipping: "Shipping", returns: "Returns" } as const;
+
+/** The sample shop's policy: its catalog copy, checked against its policies page on this site. */
+async function samplePolicy(state: State, topic: R.PolicyTopic): Promise<Produced> {
+  const page = await readSamplePage(state, "/shop/policies");
+  const record = R.policyRecord(topic, page, state.run.deps.shop.name);
+  const live = record.source.startsWith("http");
+  return {
+    records: [record],
+    label: `${TOPIC_LABEL[topic]} policy${live ? " from the live page" : ""}`,
+  };
+}
+
+/**
+ * A real shop's policy, from its settings: the text the seller gave, or else the page it points
+ * to, read with Tavily. Neither means no record, and the label says so.
+ */
+async function settingsPolicy(state: State, topic: R.PolicyTopic): Promise<Produced> {
+  const policy = state.run.deps.shop.policies?.[topic];
+  if (policy?.text.trim()) {
+    return {
+      records: [R.policyTextRecord(topic, policy)],
+      label: `${TOPIC_LABEL[topic]} policy from the shop's settings`,
+    };
+  }
+  if (!policy?.url) return { records: [], label: `No ${topic} policy on file` };
+  const host = hostOf(policy.url);
+  const page = await readUrl(state, policy.url);
+  const record = page ? R.policyPageRecord(topic, page) : null;
+  if (!record) return { records: [], label: `Couldn't read the ${topic} policy at ${host}` };
+  return { records: [record], label: `${TOPIC_LABEL[topic]} policy read from ${host}` };
+}
 
 const policiesTool: Tool<{ topic: "shipping" | "returns" }, State> = {
   name: "shop_policies",
@@ -209,14 +284,11 @@ const policiesTool: Tool<{ topic: "shipping" | "returns" }, State> = {
   input: PolicyInput,
   pending: "Reading the shop's policies",
   run: ({ topic }, state) =>
-    once(state, `policy:${topic}`, async () => {
-      const record = R.policyRecord(topic, await readPage(state, "/shop/policies"));
-      const live = record.source.startsWith("http");
-      return {
-        records: [record],
-        label: `${topic === "shipping" ? "Shipping" : "Returns"} policy${live ? " from the live page" : ""}`,
-      };
-    }),
+    once(state, `policy:${topic}`, () =>
+      state.run.deps.shop.kind === "sample"
+        ? samplePolicy(state, topic)
+        : settingsPolicy(state, topic),
+    ),
 };
 
 const messagesTool: Tool<Record<string, never>, State> = {
@@ -238,22 +310,32 @@ const messagesTool: Tool<Record<string, never>, State> = {
     }),
 };
 
+/**
+ * What the vision model is told about the product. A sample shop's catalog gives the stated size
+ * to read against; a real shop's order only names the items.
+ */
+function photoHint(run: Run): string {
+  const product =
+    run.deps.shop.kind === "sample"
+      ? run.order?.items.map((i) => productById(i.productId)).find((p) => p !== undefined)
+      : undefined;
+  if (product) {
+    const size = product.details.find((d) => /size/i.test(d.label));
+    return `The product is the ${product.name}.${size ? ` For reference, its listing states the size as ${size.value}; read any measurement yourself rather than assuming it matches.` : ""}`;
+  }
+  const items = run.order?.items.map((i) => i.name).join(", ");
+  return items ? `The order is for: ${clean(items, 300)}.` : "";
+}
+
 async function readOnePhoto(state: State, caption: string, url: string): Promise<R.NewRecord> {
   const { run } = state;
   const dataUrl = run.deps.readPhoto ? await run.deps.readPhoto(url).catch(() => null) : null;
   if (!dataUrl) return R.photoRecord(caption, url, null, run.kase.openedAt);
   state.photos.push({ caption, dataUrl });
-  const product = run.order?.items
-    .map((i) => productById(i.productId))
-    .find((p) => p !== undefined);
-  const size = product?.details.find((d) => /size/i.test(d.label));
-  const hint = product
-    ? `The product is the ${product.name}.${size ? ` For reference, its listing states the size as ${size.value}; read any measurement yourself rather than assuming it matches.` : ""}`
-    : "";
   const content: ChatCompletionContentPart[] = [
     {
       type: "text",
-      text: `The buyer's caption:\n${fence("buyer", caption, 300)}\n\n${hint}\n\nDescribe the photo.`,
+      text: `The buyer's caption:\n${fence("buyer", caption, 300)}\n\n${photoHint(run)}\n\nDescribe the photo.`,
     },
     { type: "image_url", image_url: { url: dataUrl } },
   ];
@@ -314,9 +396,11 @@ const similarTool: Tool<Record<string, never>, State> = {
   run: (_input, state) =>
     once(state, "similar", async () => {
       const { run } = state;
+      const { shop, store } = run.deps;
       const model = run.deps.models.embed;
       try {
-        const found = await findSimilar(run.client, run.deps.store, model, run.kase, run.closed, {
+        const found = await findSimilar(run.client, store, model, run.kase, run.closed, {
+          currency: shop.currency,
           signal: deadline(TIMEOUTS.embed.deadline, run.deps.signal),
           attemptTimeoutMs: TIMEOUTS.embed.attempt,
         });
@@ -327,10 +411,8 @@ const similarTool: Tool<Record<string, never>, State> = {
         const records = await Promise.all(
           found.similar.map(async (match) => {
             const past = run.closed.find((c) => c.id === match.caseId)!;
-            const events = await run.deps.store
-              .listEvents(run.deps.workspace.id, past.id)
-              .catch(() => []);
-            return R.historyRecord(past, events);
+            const events = await store.listEvents(shop.id, past.id).catch(() => []);
+            return R.historyRecord(past, events, shop);
           }),
         );
         const n = records.length;
@@ -377,6 +459,7 @@ function required(run: Run): { tool: Tool<unknown, State>; input: unknown; key: 
 
 export async function gatherStep(run: Run): Promise<Gathered> {
   const model = run.deps.models.fast;
+  const { shop } = run.deps;
   run.emit({
     type: "step",
     step: "gather",
@@ -403,11 +486,11 @@ export async function gatherStep(run: Run): Promise<Gathered> {
     const agent = runAgent({
       client: run.client,
       model,
-      system: gatherSystem(),
+      system: gatherSystem(shop),
       messages: [
         {
           role: "user",
-          content: `${caseBlock(run.kase, run.now)}\n\n${orderLine(run.order)}\n${photoNote}`,
+          content: `${caseBlock(run.kase, run.now, shop)}\n\n${orderLine(run.order, shop)}\n${photoNote}`,
         },
       ],
       tools: TOOLS,

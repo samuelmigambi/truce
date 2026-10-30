@@ -110,7 +110,7 @@ function Backdrop({ onClick }: { onClick: () => void }) {
     <motion.div
       aria-hidden
       onClick={onClick}
-      className="fixed inset-0 z-50 bg-[#1e2614]/30 backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 bg-[#1e2614]/30 backdrop-blur-[2px] dark:bg-black/50"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -184,7 +184,9 @@ function DialogPanel({
             transition: { duration: duration.fast, ease: ease.in },
           }}
         >
-          <div className="flex items-start justify-between gap-4 px-6 pt-5">
+          <div
+            className={cn("flex items-start justify-between gap-4 px-6 pt-5", !children && "pb-7")}
+          >
             <div className="min-w-0">
               <h2 id={titleId} className="text-ink text-[17px] leading-6 font-semibold">
                 {title}
@@ -199,7 +201,7 @@ function DialogPanel({
               <X />
             </IconButton>
           </div>
-          {children && <div className="min-h-0 overflow-y-auto px-6 pt-4 pb-6">{children}</div>}
+          {children && <div className="min-h-0 overflow-y-auto px-6 pt-4 pb-7">{children}</div>}
           {footer && (
             <div className="border-line-soft bg-cream/60 flex flex-col-reverse gap-2 border-t px-6 py-4 sm:flex-row sm:justify-end">
               {footer}

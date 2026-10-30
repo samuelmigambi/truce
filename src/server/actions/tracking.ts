@@ -1,20 +1,23 @@
 import "server-only";
 
 import type { AddTrackingRequest, AddTrackingResponse, OrderWithChecks } from "@/lib/api-types";
-import type { Case, Order, TrackingEvent, Workspace } from "@/lib/domain";
+import type { Case, Order, Shop, Tracking, TrackingEvent } from "@/lib/domain";
 import { shippingChecks } from "@/lib/rules/protection";
 import { cityOf } from "@/server/demo/places";
 import { seededRng } from "@/server/demo/rng";
 import { loadPendingScans, savePendingScans, splitScans } from "@/server/demo/scans";
 import { deliveryTime, ORIGIN, scanHistory } from "@/server/demo/usps";
+import { log } from "@/server/log";
 import { PayPalError, type PayPal } from "@/server/paypal/client";
 import type { Store } from "@/server/store";
 import { ActionError } from "./errors";
 
 /**
- * Adding tracking before an order ships. Seller Protection needs it on the PayPal order, so the
- * live sandbox sends it to PayPal's track API. A demo copy simulates the upload and the carrier's
- * scans, which then arrive over the next few days.
+ * Adding tracking before an order ships. Seller Protection needs it on the PayPal payment, so a
+ * real shop sends it to its PayPal app (the order's track API, or the trackers API for a payment
+ * made outside Orders v2). There's no carrier API yet, so a real shop's tracking is the number and
+ * PayPal's status for it. A sample shop simulates the upload and the carrier's scans, which then
+ * arrive over the next few days, and says so.
  */
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -46,7 +49,7 @@ export function normalizeTrackingNumber(number: string): string {
 
 export interface AddTrackingInput {
   store: Store;
-  workspace: Workspace;
+  shop: Shop;
   orderId: string;
   request: AddTrackingRequest;
   paypal?: PayPal | null;
@@ -54,10 +57,14 @@ export interface AddTrackingInput {
 }
 
 export async function addTracking(input: AddTrackingInput): Promise<AddTrackingResponse> {
-  const { store, workspace, orderId } = input;
+  const { store, shop, orderId } = input;
   const now = input.now ?? new Date();
-  const order = await store.getOrder(workspace.id, orderId);
-  if (!order) throw new ActionError(404, "There's no order with that number here.");
+  const order = await store.getOrder(shop.id, orderId);
+  if (!order) {
+    throw new ActionError(404, "There's no order with that number in this shop.", {
+      code: "order_not_found",
+    });
+  }
   if (order.status === "refunded")
     throw new ActionError(409, "This order was refunded, so it won't ship.");
   if (order.tracking?.uploaded) {
@@ -68,30 +75,49 @@ export async function addTracking(input: AddTrackingInput): Promise<AddTrackingR
   }
   const carrier = input.request.carrier;
   const number = normalizeTrackingNumber(input.request.number);
-  const simulated = workspace.kind === "demo";
+  const simulated = shop.kind === "sample";
 
-  let events: TrackingEvent[];
+  let tracking: Tracking;
   if (simulated) {
-    events = await simulateScans(store, workspace, order, carrier, number, now);
+    const events = await simulateScans(store, shop, order, carrier, number, now);
+    tracking = {
+      carrier,
+      number,
+      uploaded: true,
+      deliveredAt: null,
+      signedFor: false,
+      events,
+      scans: "simulated",
+    };
   } else {
+    if (shop.paypal && !shop.paypal.features.tracking) {
+      throw new ActionError(
+        409,
+        "This shop's PayPal app can't add tracking. Turn on tracking for the app in the PayPal developer dashboard, then check the connection.",
+        { code: "paypal_missing_features" },
+      );
+    }
     await uploadToPayPal(input.paypal ?? null, order, carrier, number);
-    events = [
-      {
-        at: now.toISOString(),
-        status: "label_created",
-        location: ORIGIN.postOffice,
-        detail: `Shipping label created; tracking added to the PayPal order`,
-      },
-    ];
+    tracking = {
+      carrier,
+      number,
+      uploaded: true,
+      deliveredAt: null,
+      signedFor: false,
+      events: [],
+      scans: "none",
+      paypalStatus: "SHIPPED",
+      shippedAt: now.toISOString(),
+    };
   }
 
   const updated: Order = {
     ...order,
-    status: order.status === "paid" ? "label_created" : order.status,
-    tracking: { carrier, number, uploaded: true, deliveredAt: null, signedFor: false, events },
+    status: order.status === "paid" ? (simulated ? "label_created" : "shipped") : order.status,
+    tracking,
   };
-  await store.saveOrder(workspace.id, updated);
-  const cases = await store.listCases(workspace.id);
+  await store.saveOrder(shop.id, updated);
+  const cases = await store.listCases(shop.id);
   return { order: withChecks(updated, cases), simulated };
 }
 
@@ -101,21 +127,42 @@ async function uploadToPayPal(
   carrier: string,
   number: string,
 ) {
-  if (!client)
-    throw new ActionError(503, "PayPal isn't connected here, so the tracking wasn't added.");
-  if (!order.paypalOrderId || !order.captureId) {
+  if (!client) {
+    throw new ActionError(
+      409,
+      "This shop isn't connected to PayPal, so the tracking wasn't added.",
+      {
+        code: "paypal_not_connected",
+      },
+    );
+  }
+  if (!order.captureId) {
     throw new ActionError(409, "This order has no PayPal payment to add tracking to.");
   }
   try {
-    await client.addTracking(order.paypalOrderId, {
-      capture_id: order.captureId,
-      tracking_number: number,
-      carrier,
-      notify_payer: false,
-    });
+    if (order.paypalOrderId) {
+      await client.addTracking(order.paypalOrderId, {
+        capture_id: order.captureId,
+        tracking_number: number,
+        carrier,
+        notify_payer: false,
+      });
+    } else {
+      const result = await client.addTrackers([
+        { transaction_id: order.captureId, tracking_number: number, status: "SHIPPED", carrier },
+      ]);
+      const refused = result.errors?.[0];
+      if (refused) {
+        throw new ActionError(
+          422,
+          `PayPal didn't accept the tracking: ${refused.message ?? refused.name ?? "it gave no reason"}.`,
+        );
+      }
+    }
   } catch (error) {
+    if (error instanceof ActionError) throw error;
     if (!(error instanceof PayPalError)) {
-      console.error("[tracking] PayPal unreachable", error);
+      log.warn("tracking.paypal_unreachable", { error });
       throw new ActionError(
         502,
         "Couldn't reach PayPal, so the tracking wasn't added. Try again in a moment.",
@@ -136,7 +183,7 @@ async function uploadToPayPal(
  */
 async function simulateScans(
   store: Store,
-  workspace: Workspace,
+  shop: Shop,
   order: Order,
   carrier: string,
   number: string,
@@ -169,8 +216,8 @@ async function simulateScans(
     deliveredAt: rng.pick(["mailbox", "porch"] as const),
   });
   const { past, future } = splitScans(scans, now.getTime());
-  const pending = await loadPendingScans(store, workspace.id);
+  const pending = await loadPendingScans(store, shop.id);
   pending[order.id] = future;
-  await savePendingScans(store, workspace.id, pending);
+  await savePendingScans(store, shop.id, pending);
   return past;
 }

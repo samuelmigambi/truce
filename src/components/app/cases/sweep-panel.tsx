@@ -3,8 +3,9 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Check, CircleAlert, Inbox, Moon, ShieldAlert, X } from "lucide-react";
 import Link from "next/link";
-import { formatCost } from "@/lib/client/format";
+import { shopHref } from "@/lib/client/api";
 import { useCases } from "@/lib/client/hooks";
+import { useShopId } from "@/lib/client/shop-context";
 import { dismissSweep, useSweep, type SweepLine } from "@/lib/client/sweep";
 import { duration, ease, spring } from "../../motion";
 import { IconButton } from "../../ui/button";
@@ -13,7 +14,8 @@ import { ThinkingMark } from "../../ui/logo";
 
 /** The overnight check, streaming: a progress bar and a live log of what Truce looked at. */
 export function SweepPanel() {
-  const sweep = useSweep();
+  const shopId = useShopId();
+  const sweep = useSweep(shopId);
   const visible = sweep.status !== "idle";
   const fraction =
     sweep.progress && sweep.progress.total > 0
@@ -64,14 +66,17 @@ export function SweepPanel() {
                   <h2 className="text-ink text-[15px] font-semibold">Overnight check</h2>
                   <p className="text-ink-2 text-[13px]">
                     {sweep.status === "running" && (sweep.progress?.label ?? "Starting")}
-                    {sweep.status === "done" &&
-                      `Done${seconds ? ` in ${seconds} s` : ""}${sweep.cost > 0 ? ` · ${formatCost(sweep.cost)}` : ""}`}
+                    {sweep.status === "done" && `Done${seconds ? ` in ${seconds} s` : ""}`}
                     {sweep.status === "error" && (sweep.error ?? "The check stopped early.")}
                   </p>
                 </div>
               </div>
               {sweep.status !== "running" && (
-                <IconButton label="Close the overnight check" size="sm" onClick={dismissSweep}>
+                <IconButton
+                  label="Close the overnight check"
+                  size="sm"
+                  onClick={() => dismissSweep(shopId)}
+                >
                   <X />
                 </IconButton>
               )}
@@ -89,7 +94,7 @@ export function SweepPanel() {
               />
             </div>
 
-            <ol className="max-h-64 space-y-1 overflow-y-auto px-5 pt-3 pb-4">
+            <ol className="space-y-1 px-5 pt-3 pb-4">
               <AnimatePresence initial={false}>
                 {sweep.lines.map((line) => (
                   <motion.li
@@ -124,6 +129,7 @@ export function SweepPanel() {
 }
 
 function Line({ line }: { line: SweepLine }) {
+  const shopId = useShopId();
   const cases = useCases().data?.cases;
   if (line.kind === "progress") {
     return (
@@ -136,7 +142,7 @@ function Line({ line }: { line: SweepLine }) {
   if (line.kind === "case") {
     return (
       <Link
-        href={`/app/cases/${encodeURIComponent(line.caseId)}`}
+        href={shopHref(shopId, `cases/${encodeURIComponent(line.caseId)}`)}
         className="hover:bg-wash -mx-2 flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-[13px] transition-colors"
       >
         <Inbox className="text-moss mt-0.5 size-3.5 shrink-0" />
@@ -151,7 +157,7 @@ function Line({ line }: { line: SweepLine }) {
   }
   return (
     <Link
-      href={`/app/orders?order=${encodeURIComponent(line.orderId)}`}
+      href={shopHref(shopId, `orders?order=${encodeURIComponent(line.orderId)}`)}
       className="hover:bg-wash -mx-2 flex items-start gap-2.5 rounded-lg px-2 py-1.5 text-[13px] transition-colors"
     >
       {line.ok ? (

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Analysis, Case } from "@/lib/domain";
 import { buildSeed } from "./demo/seed";
-import { computeMetrics, modelSpend, shopRatio, weekStart, workspaceMetrics } from "./metrics";
+import { computeMetrics, modelSpend, shopMetrics, shopRatio, weekStart } from "./metrics";
 import { MemoryStore } from "./store/memory";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -151,7 +151,7 @@ describe("metric helpers", () => {
       "w",
       analysis("demo-inr-86", [["nvidia/Nemotron-3.5-Super-VL", 0.004]], 0.004),
     );
-    const metrics = await workspaceMetrics(store, "w", now);
+    const metrics = await shopMetrics(store, "w", now);
     expect(metrics.spend).toEqual([
       { model: "nvidia/Nemotron-3.5-Super-VL", calls: 1, cost: 0.004 },
     ]);

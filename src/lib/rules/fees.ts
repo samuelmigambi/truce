@@ -46,10 +46,12 @@ export function disputeFee(q: FeeQuestion): Fee {
   if (q.highVolume) {
     return { amount: DISPUTE_FEES.highVolume, why: "High-volume fee, charged even when you win" };
   }
-  if (q.ending === "settled_with_buyer") return { amount: 0, why: "Resolved directly with the buyer" };
+  if (q.ending === "settled_with_buyer")
+    return { amount: 0, why: "Resolved directly with the buyer" };
   if (q.protectedSale) return { amount: 0, why: "Covered by Seller Protection" };
   if (q.reason === "unauthorized") return { amount: 0, why: "Unauthorized claims carry no fee" };
-  if (q.amount < DISPUTE_FEES.smallClaimLimit) return { amount: 0, why: "Small claims carry no fee" };
+  if (q.amount < DISPUTE_FEES.smallClaimLimit)
+    return { amount: 0, why: "Small claims carry no fee" };
   if (q.ending === "seller_won") return { amount: 0, why: "No fee when you win" };
   return { amount: DISPUTE_FEES.standard, why: "Standard dispute fee" };
 }

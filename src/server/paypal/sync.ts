@@ -1,6 +1,5 @@
 import "server-only";
 
-import { PRODUCTS } from "@/lib/catalog";
 import type {
   Buyer,
   Case,
@@ -11,19 +10,22 @@ import type {
   DisputeReason,
   Order,
   OrderItem,
-  Workspace,
+  Shop,
 } from "@/lib/domain";
-import { formatUsd, toCents, type Cents } from "@/lib/money";
+import { formatMoney, toCents, type Cents } from "@/lib/money";
 import { closeCase } from "@/server/actions/close";
+import { notify } from "@/server/notifications";
 import type { Store } from "@/server/store";
 import type { PayPal } from "./client";
 import { reasonOf, stageOf } from "./map";
+import { orderFromPayPal } from "./orders";
 import type * as P from "./types";
 
 /**
- * Keeps the live workspace in step with the PayPal sandbox: every dispute, resolved ones too,
- * becomes a Case linked to its order by the capture ID. PayPal's view wins for the dispute's
- * state; Truce's own events and messages are never dropped.
+ * Keeps a connected shop in step with its PayPal app: every dispute, resolved ones too, becomes
+ * a Case linked to its order by the capture ID. An order Truce hasn't seen is filled in from
+ * PayPal (capture, order, tracker). PayPal's view wins for the dispute's state; Truce's own
+ * events and messages are never dropped. New disputes, buyer replies and rulings notify.
  */
 
 /** Fields PayPal sends that types.ts doesn't list. */
@@ -41,6 +43,15 @@ export interface SyncResult {
   checked: number;
   created: number;
   updated: number;
+}
+
+export interface SyncOptions {
+  /** Fills in unknown orders from PayPal's capture, order and tracker APIs (on by default). */
+  enrich?: boolean;
+  /** Called with each case once it's up to date, for a streamed sync. */
+  onCase?: (kase: Case, created: boolean) => void;
+  /** Called after each dispute, with how many are done. */
+  onProgress?: (done: number, total: number) => void;
 }
 
 const REASON_LABEL: Record<DisputeReason, string> = {
@@ -173,7 +184,19 @@ export function caseFromDispute(
     feeAvoided: existing?.feeAvoided ?? 0,
     updatedAt: dispute.update_time,
     paypalUpdatedAt: dispute.update_time,
+    paypalActions: actionsOf(dispute),
   };
+}
+
+/** What PayPal lets the seller do now, by its links' names ("provide_supporting_info"…). */
+export function actionsOf(dispute: P.Dispute): string[] {
+  return [
+    ...new Set(
+      (dispute.links ?? [])
+        .map((link) => link.rel.toLowerCase().replace(/-/g, "_"))
+        .filter((rel) => rel !== "self"),
+    ),
+  ];
 }
 
 function summarize(items: OrderItem[]): string {
@@ -200,13 +223,12 @@ export function orderFromDispute(dispute: DisputeDetails): Order {
   const listed = (tx?.items ?? []).filter((i) => i.item_name);
   const items: OrderItem[] = listed.length
     ? listed.map((i) => {
-        const product = PRODUCTS.find((p) => p.name.toLowerCase() === i.item_name!.toLowerCase());
         const quantity = Math.max(1, Number(i.item_quantity) || 1);
         return {
-          productId: product?.id ?? "unknown",
+          productId: "unknown",
           name: i.item_name!,
           quantity,
-          unitPrice: product?.price ?? Math.round(amount / quantity / listed.length),
+          unitPrice: Math.round(amount / quantity / listed.length),
         };
       })
     : [{ productId: "unknown", name: "PayPal payment", quantity: 1, unitPrice: amount }];
@@ -289,47 +311,115 @@ function syncEvents(
   return events;
 }
 
-const CLOSED_TITLE: Record<CaseOutcome, (amount: Cents, refunded: Cents) => string> = {
-  won: (amount) => `Closed: PayPal ruled in your favor, and you kept ${formatUsd(amount)}`,
-  lost: (_, refunded) =>
-    `Closed: PayPal ruled for the buyer, and ${formatUsd(refunded)} went back to them`,
-  settled: (_, refunded) => `Closed: settled for ${formatUsd(refunded)}`,
-  refunded: (_, refunded) => `Closed: ${formatUsd(refunded)} refunded to the buyer`,
-  buyer_closed: () => "Closed: the buyer closed the case",
-};
+type Money = (cents: Cents) => string;
 
-/** Saves one dispute's state as a case, links its order, records events, and closes it if resolved. */
+const CLOSED_TITLE: Record<CaseOutcome, (amount: Cents, refunded: Cents, money: Money) => string> =
+  {
+    won: (amount, _, money) => `Closed: PayPal ruled in your favor, and you kept ${money(amount)}`,
+    lost: (_, refunded, money) =>
+      `Closed: PayPal ruled for the buyer, and ${money(refunded)} went back to them`,
+    settled: (_, refunded, money) => `Closed: settled for ${money(refunded)}`,
+    refunded: (_, refunded, money) => `Closed: ${money(refunded)} refunded to the buyer`,
+    buyer_closed: () => "Closed: the buyer closed the case",
+  };
+
+/** The notifications a change in a dispute makes. Their IDs are fixed, so they never repeat. */
+async function notifyChange(
+  store: Store,
+  shop: Shop,
+  before: SyncedCase | null,
+  after: Case,
+  dispute: DisputeDetails,
+): Promise<void> {
+  const id = dispute.dispute_id;
+  if (!before) {
+    // One that arrives already resolved is history, not news.
+    if (statusOf(dispute.status) === "closed") return;
+    await notify(store, shop.id, {
+      id: `opened:${id}`,
+      kind: "dispute_opened",
+      title: `New dispute: ${after.buyer.name}, ${formatMoney(after.amount, shop.currency)}`,
+      detail: `${REASON_LABEL[after.reason]} · ${after.itemSummary}`,
+      caseId: after.id,
+      at: after.openedAt,
+    });
+    return;
+  }
+  const lastBuyer = [...after.messages].reverse().find((m) => m.from === "buyer");
+  const known = lastBuyer
+    ? before.messages.some((m) => m.from === "buyer" && sameMessage(m, lastBuyer))
+    : true;
+  if (lastBuyer && !known) {
+    await notify(store, shop.id, {
+      id: `reply:${id}:${lastBuyer.at}`,
+      kind: "buyer_reply",
+      title: `${after.buyer.name} replied`,
+      detail: lastBuyer.text.slice(0, 140),
+      caseId: after.id,
+      at: lastBuyer.at,
+    });
+  }
+  if (before.stage === "inquiry" && after.stage !== "inquiry") {
+    await notify(store, shop.id, {
+      id: `escalated:${id}`,
+      kind: "dispute_updated",
+      title: `${after.buyer.name} escalated the dispute to a claim`,
+      caseId: after.id,
+    });
+  }
+}
+
+/**
+ * Saves one dispute's state as a case, links its order (filled in from PayPal when `client` is
+ * given and the order is new), records events and notifications, and closes it if resolved.
+ */
 export async function applyDispute(
   store: Store,
-  workspace: Workspace,
+  shop: Shop,
   dispute: DisputeDetails,
   existing: SyncedCase | null,
   orders: Order[],
+  client: PayPal | null = null,
 ): Promise<Case> {
   let order = findOrder(dispute, orders);
   if (!order) {
-    order = orderFromDispute(dispute);
-    await store.saveOrder(workspace.id, order);
+    const base = orderFromDispute(dispute);
+    order = client && base.captureId ? await orderFromPayPal(client, base.captureId, base) : base;
+    await store.saveOrder(shop.id, order);
     orders.push(order);
   }
   const next = caseFromDispute(dispute, existing, order);
-  await store.saveCase(workspace.id, next);
+  await store.saveCase(shop.id, next);
   for (const event of syncEvents(dispute, existing, next)) {
-    await store.addEvent(workspace.id, next.id, event);
+    await store.addEvent(shop.id, next.id, event);
   }
+  await notifyChange(store, shop, existing, next, dispute);
   if (statusOf(dispute.status) !== "closed" || existing?.status === "closed") return next;
 
   const { outcome, refunded } = outcomeOf(dispute);
   const ending = outcome ?? (refunded > 0 ? "refunded" : "buyer_closed");
   const at = new Date(dispute.update_time);
-  const closed = await closeCase(store, workspace.id, next, ending, refunded, at);
-  await store.addEvent(workspace.id, closed.id, {
+  const closed = await closeCase(store, shop, next, ending, refunded, at);
+  const title = CLOSED_TITLE[ending](closed.amount, refunded, (cents) =>
+    formatMoney(cents, shop.currency),
+  );
+  await store.addEvent(shop.id, closed.id, {
     id: `pp-${dispute.dispute_id}-closed`,
     at: at.toISOString(),
     kind: "closed",
     actor: "paypal",
-    title: CLOSED_TITLE[ending](closed.amount, refunded),
+    title,
   });
+  if (existing) {
+    await notify(store, shop.id, {
+      id: `closed:${dispute.dispute_id}`,
+      kind: "decided",
+      title,
+      detail: `${closed.buyer.name} · ${closed.itemSummary}`,
+      caseId: closed.id,
+      at: at.toISOString(),
+    });
+  }
   return closed;
 }
 
@@ -347,23 +437,30 @@ async function listAll(client: PayPal): Promise<P.DisputeSummary[]> {
 /** Brings every dispute up to date; details are fetched only for disputes that changed. */
 export async function syncDisputes(
   store: Store,
-  workspace: Workspace,
+  shop: Shop,
   client: PayPal,
+  options: SyncOptions = {},
 ): Promise<SyncResult> {
   const summaries = await listAll(client);
-  const [cases, orders] = await Promise.all([
-    store.listCases(workspace.id),
-    store.listOrders(workspace.id),
-  ]);
+  const [cases, orders] = await Promise.all([store.listCases(shop.id), store.listOrders(shop.id)]);
   const known = new Map(cases.map((c) => [c.paypalDisputeId, c as SyncedCase]));
   const result: SyncResult = { checked: summaries.length, created: 0, updated: 0 };
+  let done = 0;
   for (const summary of summaries) {
     const existing = known.get(summary.dispute_id) ?? null;
-    if (existing && existing.paypalUpdatedAt === summary.update_time) continue;
-    const dispute = (await client.getDispute(summary.dispute_id)) as DisputeDetails;
-    await applyDispute(store, workspace, dispute, existing, orders);
-    if (existing) result.updated++;
-    else result.created++;
+    // A case from before Truce kept PayPal's allowed actions is read again once to fill them in.
+    const stale = !existing || existing.paypalUpdatedAt !== summary.update_time;
+    if (stale || !existing.paypalActions) {
+      const dispute = (await client.getDispute(summary.dispute_id)) as DisputeDetails;
+      const enrichWith = options.enrich === false ? null : client;
+      const saved = await applyDispute(store, shop, dispute, existing, orders, enrichWith);
+      if (existing) result.updated++;
+      else result.created++;
+      options.onCase?.(saved, !existing);
+    } else {
+      options.onCase?.(existing, false);
+    }
+    options.onProgress?.(++done, summaries.length);
   }
   return result;
 }
@@ -371,33 +468,38 @@ export async function syncDisputes(
 /** Brings one dispute up to date, as a webhook or an approval asks. */
 export async function syncDispute(
   store: Store,
-  workspace: Workspace,
+  shop: Shop,
   client: PayPal,
   disputeId: string,
 ): Promise<Case> {
   const [dispute, cases, orders] = await Promise.all([
     client.getDispute(disputeId) as Promise<DisputeDetails>,
-    store.listCases(workspace.id),
-    store.listOrders(workspace.id),
+    store.listCases(shop.id),
+    store.listOrders(shop.id),
   ]);
   const existing =
     (cases.find((c) => c.paypalDisputeId === disputeId) as SyncedCase | undefined) ?? null;
-  return applyDispute(store, workspace, dispute, existing, orders);
+  return applyDispute(store, shop, dispute, existing, orders, client);
 }
 
-const syncKey = (workspaceId: string) => `sync:${workspaceId}`;
+const syncKey = (shopId: string) => `sync:${shopId}`;
+
+/** Notes a full sync just ran, so the reads that follow don't run another for a minute. */
+export async function markSynced(store: Store, shopId: string, now = new Date()): Promise<void> {
+  await store.setCached(syncKey(shopId), now.toISOString(), 24 * 60 * 60).catch(() => undefined);
+}
 
 /** Syncs at most once a minute, however many pages ask at once. */
 export async function syncIfStale(
   store: Store,
-  workspace: Workspace,
+  shop: Shop,
   client: PayPal,
   maxAgeMs = 60_000,
   now = new Date(),
 ): Promise<SyncResult | null> {
-  const last = await store.getCached<string>(syncKey(workspace.id));
+  const last = await store.getCached<string>(syncKey(shop.id));
   if (last && now.getTime() - Date.parse(last) < maxAgeMs) return null;
   // Claim the slot first, so parallel reads don't all call PayPal.
-  await store.setCached(syncKey(workspace.id), now.toISOString(), 24 * 60 * 60);
-  return syncDisputes(store, workspace, client);
+  await store.setCached(syncKey(shop.id), now.toISOString(), 24 * 60 * 60);
+  return syncDisputes(store, shop, client);
 }

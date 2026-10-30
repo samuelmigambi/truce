@@ -1,28 +1,26 @@
 import type { ReactNode } from "react";
 import { cn } from "../ui/cn";
 
-/** Every app screen opens the same way: a title, one line under it, actions on the right. */
+/** Every app screen opens the same way: a title, with actions on the right. */
 export function PageHeader({
   title,
-  description,
   actions,
   className,
 }: {
   title: ReactNode;
-  description?: ReactNode;
   actions?: ReactNode;
   className?: string;
 }) {
   return (
     <div
-      className={cn("flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between", className)}
+      className={cn(
+        "flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between",
+        className,
+      )}
     >
-      <div className="min-w-0">
-        <h1 className="text-ink text-[26px] leading-tight font-semibold tracking-[-0.02em]">
-          {title}
-        </h1>
-        {description && <p className="text-ink-2 mt-1 text-sm">{description}</p>}
-      </div>
+      <h1 className="text-ink min-w-0 text-[26px] leading-tight font-semibold tracking-[-0.02em]">
+        {title}
+      </h1>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );

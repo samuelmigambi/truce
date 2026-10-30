@@ -6,13 +6,13 @@ import Link from "next/link";
 import { useState } from "react";
 import type { ChatCard } from "@/lib/api-types";
 import { approveCase } from "@/lib/client/actions";
-import { errorMessage } from "@/lib/client/api";
+import { errorMessage, shopHref } from "@/lib/client/api";
 import { useCases, useOrders } from "@/lib/client/hooks";
-import { MOVE, STATUS } from "@/lib/client/labels";
-import { formatUsd } from "@/lib/money";
+import { MOVE, reviewAction, sendBlocker, STATUS } from "@/lib/client/labels";
+import { useMoney, useShop, useShopId } from "@/lib/client/shop-context";
 import { spring } from "../../motion";
 import { Avatar } from "../../ui/avatar";
-import { Button } from "../../ui/button";
+import { Button, ButtonLink } from "../../ui/button";
 import { Chip } from "../../ui/chip";
 import { cn } from "../../ui/cn";
 import { MoveChip, ReasonChip } from "../case-chips";
@@ -40,11 +40,14 @@ const shell =
   "block rounded-card border border-line bg-paper transition-[border-color,box-shadow] duration-150";
 
 function CaseCard({ caseId, onNavigate }: { caseId: string; onNavigate?: () => void }) {
+  const shopId = useShopId();
+  const money = useMoney();
   const kase = useCases().data?.cases.find((c) => c.id === caseId);
+  const href = shopHref(shopId, `cases/${encodeURIComponent(caseId)}`);
   if (!kase) {
     return (
       <Link
-        href={`/app/cases/${encodeURIComponent(caseId)}`}
+        href={href}
         onClick={onNavigate}
         className={cn(shell, "text-ink-2 hover:border-line-strong px-4 py-3 text-sm")}
       >
@@ -54,7 +57,7 @@ function CaseCard({ caseId, onNavigate }: { caseId: string; onNavigate?: () => v
   }
   return (
     <Link
-      href={`/app/cases/${encodeURIComponent(kase.id)}`}
+      href={href}
       onClick={onNavigate}
       className={cn(shell, "group hover:border-line-strong hover:shadow-lift p-3.5")}
     >
@@ -63,7 +66,7 @@ function CaseCard({ caseId, onNavigate }: { caseId: string; onNavigate?: () => v
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-3">
             <p className="text-ink truncate text-sm font-medium">{kase.buyer.name}</p>
-            <p className="text-ink text-sm font-medium tabular-nums">{formatUsd(kase.amount)}</p>
+            <p className="text-ink text-sm font-medium tabular-nums">{money(kase.amount)}</p>
           </div>
           <p className="text-ink-2 truncate text-[13px]">{kase.itemSummary}</p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -81,8 +84,10 @@ function CaseCard({ caseId, onNavigate }: { caseId: string; onNavigate?: () => v
 }
 
 function OrderCard({ orderId, onNavigate }: { orderId: string; onNavigate?: () => void }) {
+  const shopId = useShopId();
+  const money = useMoney();
   const order = useOrders().data?.orders.find((o) => o.id === orderId);
-  const href = `/app/orders?order=${encodeURIComponent(orderId)}`;
+  const href = shopHref(shopId, `orders?order=${encodeURIComponent(orderId)}`);
   if (!order) {
     return (
       <Link
@@ -110,7 +115,7 @@ function OrderCard({ orderId, onNavigate }: { orderId: string; onNavigate?: () =
             <p className="text-ink truncate text-sm font-medium">
               {order.id} · {order.buyer.name}
             </p>
-            <p className="text-ink text-sm font-medium tabular-nums">{formatUsd(order.amount)}</p>
+            <p className="text-ink text-sm font-medium tabular-nums">{money(order.amount)}</p>
           </div>
           <p className="text-ink-2 truncate text-[13px]">
             {order.items.map((i) => `${i.quantity} × ${i.name}`).join(", ")}
@@ -139,19 +144,26 @@ function ActionCard({
   card: Extract<ChatCard, { kind: "action" }>;
   onNavigate?: () => void;
 }) {
+  const shop = useShop();
+  const money = useMoney();
   const kase = useCases().data?.cases.find((c) => c.id === card.caseId);
-  const [state, setState] = useState<"idle" | "sending" | "sent">(
-    kase && kase.status !== "needs_you" ? "sent" : "idle",
-  );
+  const [state, setState] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState<string | null>(null);
   const [simulated, setSimulated] = useState(false);
+  const blocked = sendBlocker(shop);
+  // Answered already, from the case file or another device.
+  const handled =
+    state === "idle" &&
+    kase !== undefined &&
+    kase.status !== "needs_you" &&
+    reviewAction(shop, kase, card.move) === null;
 
   async function approve() {
-    if (!kase) return;
+    if (!kase || blocked) return;
     setState("sending");
     setError(null);
     try {
-      const response = await approveCase(kase, card.move, card.draft);
+      const response = await approveCase(shop.id, kase, card.move, card.draft);
       setSimulated(response.simulated);
       setState("sent");
     } catch (e) {
@@ -169,25 +181,20 @@ function ActionCard({
         </div>
         {card.draft.offerAmount !== undefined && (
           <span className="text-ink text-sm font-medium tabular-nums">
-            {formatUsd(card.draft.offerAmount)}
+            {money(card.draft.offerAmount)}
           </span>
         )}
       </div>
-      <p className="text-ink-2 max-h-40 overflow-y-auto px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap">
+      <p className="text-ink-2 px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap">
         {card.draft.text}
       </p>
-      <div className="border-line-soft bg-cream/60 flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2.5">
-        <Link
-          href={`/app/cases/${encodeURIComponent(card.caseId)}`}
-          onClick={onNavigate}
-          className="text-moss text-[13px] font-medium hover:underline"
-        >
-          Open the case
-        </Link>
+      {/* What happened sits on the left; the buttons sit together on the right. */}
+      <div className="border-line-soft bg-cream/60 flex flex-wrap items-center gap-x-3 gap-y-2 border-t px-4 py-2.5">
         <AnimatePresence mode="wait" initial={false}>
           {state === "sent" ? (
             <motion.span
               key="sent"
+              role="status"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1, transition: spring.pop }}
               className="text-ink inline-flex items-center gap-1.5 text-[13px] font-medium"
@@ -195,19 +202,54 @@ function ActionCard({
               <span className="bg-lemon flex size-5 items-center justify-center rounded-full">
                 <Check className="size-3" strokeWidth={3} />
               </span>
-              {simulated ? "Approved. Simulated in this demo copy" : "Approved and sent"}
+              {simulated
+                ? "Approved. Simulated in this sample shop"
+                : "Approved and sent to PayPal"}
             </motion.span>
-          ) : (
-            <motion.span key="approve" exit={{ opacity: 0 }}>
-              <Button size="sm" onClick={approve} loading={state === "sending"} disabled={!kase}>
-                Approve {MOVE[card.move].toLowerCase()}
-              </Button>
+          ) : handled ? (
+            <motion.span key="handled" className="text-ink-2 text-[13px]">
+              Already answered
             </motion.span>
-          )}
+          ) : null}
         </AnimatePresence>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <ButtonLink
+            href={shopHref(shop.id, `cases/${encodeURIComponent(card.caseId)}`)}
+            onClick={onNavigate}
+            size="sm"
+            variant="secondary"
+          >
+            Open the case
+          </ButtonLink>
+          {state !== "sent" && !handled && (
+            <Button
+              size="sm"
+              onClick={approve}
+              loading={state === "sending"}
+              disabled={!kase || blocked !== null}
+            >
+              Approve {MOVE[card.move].toLowerCase()}
+            </Button>
+          )}
+        </div>
       </div>
+      {blocked && state === "idle" && !handled && (
+        <p className="border-warn-200 bg-warn-50 text-warn-700 border-t px-4 py-2 text-[13px]">
+          {blocked}{" "}
+          <Link
+            href={shopHref(shop.id, "settings#paypal")}
+            onClick={onNavigate}
+            className="font-medium underline underline-offset-4"
+          >
+            Open settings
+          </Link>
+        </p>
+      )}
       {error && (
-        <p className="border-risk-200 bg-risk-50 text-risk-700 border-t px-4 py-2 text-[13px]">
+        <p
+          role="alert"
+          className="border-risk-200 bg-risk-50 text-risk-700 border-t px-4 py-2 text-[13px]"
+        >
           {error}
         </p>
       )}

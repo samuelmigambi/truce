@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Order, Workspace } from "@/lib/domain";
+import type { Order } from "@/lib/domain";
 import { MemoryStore } from "@/server/store/memory";
+import { testRealShop } from "@/server/testing/shops";
 import { PayPal } from "./client";
 import { PayPalExtras } from "./extras";
 import {
@@ -14,15 +15,7 @@ import {
 import { disputeIdOf, isDisputeEvent, verifyWebhook, webhookSignature } from "./webhook";
 
 const config = { clientId: "id", clientSecret: "secret", base: "https://api-m.sandbox.paypal.com" };
-const live: Workspace = {
-  id: "live",
-  kind: "live",
-  shopName: "Wick & Ember",
-  createdAt: "2026-10-27T12:00:00.000Z",
-  expiresAt: null,
-  lastSweepAt: null,
-  seedVersion: null,
-};
+const live = testRealShop(undefined, { id: "live", orderHistory: "full" });
 
 const ok = (body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -152,6 +145,58 @@ describe("syncing disputes from PayPal", () => {
       "/v1/customer/disputes?": () => ok({ items: [summary(open), summary(resolved)] }),
       [`/v1/customer/disputes/${open.dispute_id}`]: () => ok(open),
       [`/v1/customer/disputes/${resolved.dispute_id}`]: () => ok(resolved),
+      // The payment the resolved dispute is about, from PayPal: capture, order, tracker.
+      "/v2/payments/captures/3KS28481UU8400353": () =>
+        ok({
+          id: "3KS28481UU8400353",
+          status: "COMPLETED",
+          amount: { currency_code: "USD", value: "120.00" },
+          custom_id: "W-1044",
+          seller_protection: { status: "ELIGIBLE" },
+          create_time: "2026-10-27T17:46:00Z",
+          supplementary_data: { related_ids: { order_id: "6U750292DV725023R" } },
+        }),
+      "/v2/checkout/orders/6U750292DV725023R": () =>
+        ok({
+          id: "6U750292DV725023R",
+          status: "COMPLETED",
+          payer: {
+            name: { given_name: "John", surname: "Doe" },
+            email_address: "sb-buyer@personal.example.com",
+          },
+          purchase_units: [
+            {
+              custom_id: "W-1044",
+              items: [
+                {
+                  name: "Winter Grove gift box",
+                  quantity: "1",
+                  unit_amount: { currency_code: "USD", value: "120.00" },
+                  sku: "p-winter-grove-box",
+                },
+              ],
+              shipping: {
+                name: { full_name: "John Doe" },
+                address: {
+                  address_line_1: "2211 N First St",
+                  admin_area_2: "San Jose",
+                  admin_area_1: "CA",
+                  postal_code: "95131",
+                  country_code: "US",
+                },
+                trackers: [{ id: "3KS28481UU8400353-9400111899223197428491", status: "SHIPPED" }],
+              },
+            },
+          ],
+        }),
+      "/v1/shipping/trackers/3KS28481UU8400353-9400111899223197428491": () =>
+        ok({
+          transaction_id: "3KS28481UU8400353",
+          tracking_number: "9400111899223197428491",
+          status: "SHIPPED",
+          carrier: "USPS",
+          shipment_date: "2026-10-27",
+        }),
     });
     expect(await syncDisputes(store, live, fake.client)).toEqual({
       checked: 2,
@@ -197,9 +242,25 @@ describe("syncing disputes from PayPal", () => {
     const made = (await store.getOrder("live", "W-1044"))!;
     expect(made).toMatchObject({
       captureId: "3KS28481UU8400353",
+      paypalOrderId: "6U750292DV725023R",
       amount: 12000,
-      items: [{ productId: "p-winter-grove-box", unitPrice: 12000 }],
+      protection: "ELIGIBLE",
+      paypalAddress: { line1: "2211 N First St", city: "San Jose", state: "CA" },
+      status: "shipped",
+      tracking: {
+        carrier: "USPS",
+        number: "9400111899223197428491",
+        uploaded: true,
+        scans: "none",
+        paypalStatus: "SHIPPED",
+        shippedAt: "2026-10-27T12:00:00.000Z",
+      },
+      items: [{ productId: "p-winter-grove-box", name: "Winter Grove gift box", unitPrice: 12000 }],
     });
+    // A new open dispute notifies; one that arrives already resolved doesn't.
+    expect((await store.listNotifications("live", 10)).map((n) => [n.kind, n.caseId])).toEqual([
+      ["dispute_opened", open.dispute_id],
+    ]);
 
     // Unchanged disputes aren't fetched again.
     fake.calls.length = 0;

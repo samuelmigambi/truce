@@ -1,16 +1,19 @@
 import "server-only";
 
-import type { AnalysisEvent } from "@/lib/api-types";
-import type { AnalysisStepId, Case, ModelStep, Order, Workspace } from "@/lib/domain";
-import type { RatioState } from "@/lib/rules/ratio";
+import type { AnalysisEvent, Metrics } from "@/lib/api-types";
+import type { AnalysisStepId, Case, ModelStep, Order, Shop } from "@/lib/domain";
 import type { Store } from "@/server/store/types";
 import { spend, type Budget } from "../budget";
 import type { AiClient } from "../client";
 import { cachedTokensOf, costOf, type Job, type Usage } from "../models";
 
-/** Reads web pages for evidence (Tavily's extract in production). */
+/** Reads web pages for evidence: Tavily's extract and its search, limited to given domains. */
 export interface WebReader {
   extract(urls: string[]): Promise<{ url: string; content: string }[]>;
+  search(
+    query: string,
+    options: { domains: string[]; maxResults: number },
+  ): Promise<{ title: string; url: string; content: string }[]>;
 }
 
 /** Turns a case photo's URL into a data URL the vision model can read, or null. */
@@ -21,16 +24,20 @@ export interface AnalyzeDeps {
   store: Store;
   /** Token Factory; null when NEBIUS_API_KEY isn't set (replays still work). */
   client: AiClient | null;
-  workspace: Workspace;
+  /** The shop the case is in: its facts shape every record, prompt and limit. */
+  shop: Shop;
   caseId: string;
   budget: Budget;
   /** "Run again live": skip the recorded run. */
   live?: boolean;
   web?: WebReader | null;
-  /** The public address of the shop's pages, for reading the listing as the buyer saw it. */
+  /** This site's public address, where the sample shop's own pages are (SITE_URL). */
   siteUrl?: string | null;
   readPhoto?: PhotoReader;
-  /** The seed's stable ID for this case, when it's one of the demo cases; replays are keyed by it. */
+  /**
+   * The seed's stable ID for this case, when it's one of a sample shop's seeded cases; replays
+   * are keyed by it. Real shops never replay, whatever this says.
+   */
   seedCaseId?: string | null;
   models: Record<Job, string>;
   spendCap?: number;
@@ -47,7 +54,8 @@ export interface Run {
   kase: Case;
   order: Order | null;
   closed: Case[];
-  ratio: RatioState;
+  /** The claims ratio from the shop's records; `known` is false without its sales history. */
+  ratio: Metrics["ratio"];
   now: Date;
   emit(event: AnalysisEvent): void;
   meter: Meter;

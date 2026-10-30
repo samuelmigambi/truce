@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { AnalysisEvent, SweepEvent } from "@/lib/api-types";
-import type { Case, CaseEvent, Order, Workspace } from "@/lib/domain";
+import type { Case, CaseEvent, Order, Shop } from "@/lib/domain";
 import { shippingChecks } from "@/lib/rules/protection";
 import type { Store } from "@/server/store/types";
 import { dailySpendCap, gate, spend, type Budget } from "./budget";
@@ -14,18 +14,22 @@ import { caseUrgency, fallbackSummary, triageCase, type Triage } from "./pipelin
 import { JsonAnswerError } from "./structured";
 
 /**
- * The overnight check, also run on demand: pull new disputes from PayPal (live workspace), sort
- * every open case that Truce hasn't looked at with Lightning, and check each order waiting to ship
- * against Seller Protection. The overnight job also prepares a full analysis for new cases.
+ * The overnight check, also run on demand: pull new disputes from PayPal (a real shop's own
+ * connection), sort every open case that Truce hasn't looked at with Lightning, and check each
+ * order waiting to ship against Seller Protection. The overnight job also prepares a full
+ * analysis for new cases.
  */
 
 export interface SweepDeps {
   store: Store;
   client: AiClient | null;
-  workspace: Workspace;
+  shop: Shop;
   budget: Budget;
   models: Record<Job, string>;
-  /** Live only: pulls disputes from PayPal and says what changed. */
+  /**
+   * Fetches what's new and says what changed: PayPal's disputes for a real shop, or a plain note
+   * that a sample shop simulates PayPal.
+   */
   sync?: (() => Promise<{ label: string }>) | null;
   /** The overnight job prepares each new case's full analysis; the button only sorts them. */
   analyze?: ((caseId: string) => AsyncIterable<AnalysisEvent>) | null;
@@ -75,8 +79,8 @@ interface Sorted {
 
 export async function* runSweep(deps: SweepDeps): AsyncGenerator<SweepEvent> {
   const now = deps.now?.() ?? new Date();
-  const { store, workspace } = deps;
-  const allowed = await gate(deps.budget, "sweep", workspace, deps.spendCap ?? dailySpendCap());
+  const { store, shop } = deps;
+  const allowed = await gate(deps.budget, "sweep", shop, deps.spendCap ?? dailySpendCap());
   if (!allowed.ok && allowed.reason === "rate") {
     yield { type: "error", message: allowed.message };
     return;
@@ -99,16 +103,13 @@ export async function* runSweep(deps: SweepDeps): AsyncGenerator<SweepEvent> {
     }
   }
 
-  const [cases, orders] = await Promise.all([
-    store.listCases(workspace.id),
-    store.listOrders(workspace.id),
-  ]);
+  const [cases, orders] = await Promise.all([store.listCases(shop.id), store.listOrders(shop.id)]);
   const byId = new Map(orders.map((o) => [o.id, o]));
   const open = cases.filter((c) => c.status !== "closed");
   const unread = (
     await Promise.all(
       open.map(async (c) =>
-        (await store.getAnalysis(workspace.id, c.id).catch(() => null)) ? null : c,
+        (await store.getAnalysis(shop.id, c.id).catch(() => null)) ? null : c,
       ),
     )
   ).filter((c): c is Case => c !== null);
@@ -170,8 +171,9 @@ export async function* runSweep(deps: SweepDeps): AsyncGenerator<SweepEvent> {
     yield { type: "order", orderId: order.id, ok, label };
   }
 
-  const latest = (await store.getWorkspace(workspace.id).catch(() => null)) ?? workspace;
-  await store.saveWorkspace({ ...latest, lastSweepAt: now.toISOString() });
+  // The shop as it is now: the sync may have changed it while the check ran.
+  const latest = (await store.getShop(shop.id).catch(() => null)) ?? shop;
+  await store.saveShop({ ...latest, lastSweepAt: now.toISOString() });
   yield { type: "done", analyzed: unread.length, flagged };
 }
 
@@ -183,13 +185,14 @@ async function sortCase(
   order: Order | null,
   now: Date,
 ): Promise<Sorted> {
-  const { store, workspace } = deps;
-  const key = `triage:${workspace.id}:${kase.id}:${fingerprint(kase, order, [])}`;
+  const { store, shop } = deps;
+  // The summary writes the shop's money and dates, so a change to either sorts the case again.
+  const key = `triage:${shop.id}:${kase.id}:${shop.currency}:${shop.timeZone}:${fingerprint(kase, order, [])}`;
   const earlier = await store.getCached<Triage>(key).catch(() => null);
   if (earlier) return { kase, triage: earlier, cost: null, fresh: false };
 
   let triage: Triage = {
-    summary: fallbackSummary(kase, order),
+    summary: fallbackSummary(kase, order, shop),
     urgency: caseUrgency(kase, now),
     injection: false,
   };
@@ -203,6 +206,7 @@ async function sortCase(
         kase,
         order,
         now,
+        shop,
         deadline(TIMEOUTS.triage.deadline, deps.signal),
       );
       triage = answer.value;
@@ -225,7 +229,7 @@ async function sortCase(
     detail: triage.summary,
   };
   await store
-    .addEvent(workspace.id, kase.id, note)
+    .addEvent(shop.id, kase.id, note)
     .catch((error) => console.error("[sweep] couldn't note it", error));
   return { kase, triage, cost, fresh: true };
 }

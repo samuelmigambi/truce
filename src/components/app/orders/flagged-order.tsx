@@ -1,12 +1,14 @@
 "use client";
 
 import { motion } from "motion/react";
-import { Check, Copy, MessagesSquare, ShieldAlert } from "lucide-react";
+import { Check, Copy, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import type { OrderWithChecks } from "@/lib/api-types";
-import type { Address } from "@/lib/domain";
+import type { Address, Shop } from "@/lib/domain";
 import { openAsk } from "@/lib/client/ask";
+import { useShop } from "@/lib/client/shop-context";
 import { POLICIES } from "@/lib/catalog";
+import { addressNote } from "@/lib/notes";
 import { duration, ease } from "../../motion";
 import { Button } from "../../ui/button";
 
@@ -16,35 +18,26 @@ function oneLine(a: Address | null): string {
 }
 
 /**
- * The note to the buyer, from the shop's own shipping policy: Wick & Ember ships only to the
- * address on the PayPal payment. Plain words, no model needed.
+ * The shipping policy line to quote: the sample shop's own, or the first sentence of a real
+ * shop's pasted policy that mentions the address. Null when there's nothing worth quoting.
  */
-export function noteFor(order: OrderWithChecks, shopName: string): string {
-  const first = order.buyer.name.split(/\s+/)[0] ?? order.buyer.name;
-  const asked = order.shipTo
-    ? `${order.shipTo.line1}, ${order.shipTo.city}`
-    : "a different address";
-  return [
-    `Hi ${first}, thanks for your order ${order.id}.`,
-    `Your note asks us to ship to ${asked}, but we can only ship to the address on your PayPal payment, which keeps the order protected for both of us.`,
-    "If you'd like it to go there, please update the shipping address in PayPal and reply to this email. We'll ship as soon as it matches.",
-    `Thanks, ${shopName}`,
-  ].join("\n\n");
+function policyLine(shop: Pick<Shop, "kind" | "policies">): string | null {
+  if (shop.kind === "sample") return POLICIES.shipping[1] ?? null;
+  const sentences = shop.policies.shipping.text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const line = sentences.find((s) => /address/i.test(s)) ?? null;
+  return line && line.length <= 240 ? line : null;
 }
 
 /** An order that would ship without Seller Protection, the reason, and a note ready to send. */
-export function FlaggedOrder({
-  order,
-  shopName,
-  index = 0,
-}: {
-  order: OrderWithChecks;
-  shopName: string;
-  index?: number;
-}) {
+export function FlaggedOrder({ order, index = 0 }: { order: OrderWithChecks; index?: number }) {
+  const shop = useShop();
   const [copied, setCopied] = useState(false);
   const failed = order.checks.checks.filter((c) => !c.ok);
-  const note = noteFor(order, shopName);
+  const note = addressNote(order, shop.name);
+  const policy = policyLine(shop);
 
   async function copy() {
     try {
@@ -100,9 +93,11 @@ export function FlaggedOrder({
               <dd className="text-ink mt-1 text-[13px] leading-relaxed">{oneLine(order.shipTo)}</dd>
             </div>
           </dl>
-          <p className="text-ink-2 text-xs leading-relaxed">
-            Your policy: &ldquo;{POLICIES.shipping[1]}&rdquo;
-          </p>
+          {policy && (
+            <p className="text-ink-2 text-xs leading-relaxed">
+              Your policy: &ldquo;{policy}&rdquo;
+            </p>
+          )}
         </div>
 
         <div className="border-line bg-cream/40 flex flex-col rounded-[10px] border">
@@ -110,7 +105,9 @@ export function FlaggedOrder({
             <p className="text-ink text-[13px] font-medium">
               Note to {order.buyer.name.split(/\s+/)[0]}
             </p>
-            <span className="text-ink-3 text-[11px]">From your shipping policy</span>
+            <span className="text-ink-3 text-[11px]">
+              {policy ? "From your shipping policy" : "From Seller Protection's rules"}
+            </span>
           </div>
           <p className="text-ink flex-1 px-4 py-3 text-[13.5px] leading-relaxed whitespace-pre-line">
             {note}
@@ -119,10 +116,10 @@ export function FlaggedOrder({
             <Button
               size="sm"
               variant="ghost"
-              icon={<MessagesSquare />}
               onClick={() =>
                 openAsk(
-                  `Reword the note to the buyer of ${order.id} about their shipping address, keeping it short and kind.`,
+                  shop.id,
+                  `Reword the note to ${order.buyer.name} about the shipping address on order ${order.id}, keeping it short and kind.`,
                 )
               }
             >
@@ -133,6 +130,7 @@ export function FlaggedOrder({
               variant="secondary"
               icon={copied ? <Check /> : <Copy />}
               onClick={copy}
+              aria-live="polite"
             >
               {copied ? "Copied" : "Copy note"}
             </Button>

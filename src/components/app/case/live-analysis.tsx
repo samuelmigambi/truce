@@ -1,29 +1,15 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Check, CircleAlert, RotateCcw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Check, CircleAlert } from "lucide-react";
 import type { AnalysisRun, StepRun } from "@/lib/client/analysis";
-import { formatCost, formatMs } from "@/lib/client/format";
 import { STEPS } from "@/lib/client/labels";
 import { duration, ease, spring } from "../../motion";
 import { Button } from "../../ui/button";
 import { ProgressRing } from "../../ui/charts";
 import { cn } from "../../ui/cn";
 import { ThinkingMark } from "../../ui/logo";
-import { ModelBadge } from "../../ui/model-badge";
 import { Spinner } from "../../ui/spinner";
-
-/** Seconds since `from`, ticking while `running`. */
-function useElapsed(from: number, to: number | null, running: boolean): number {
-  const [now, setNow] = useState(from);
-  useEffect(() => {
-    if (!running) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 200);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  return Math.max(0, ((to ?? now) - from) / 1000);
-}
 
 /**
  * The analysis as it happens: each step lights up in turn, tools pop in as Truce uses them, and
@@ -31,7 +17,6 @@ function useElapsed(from: number, to: number | null, running: boolean): number {
  */
 export function LiveAnalysis({ run, onRetry }: { run: AnalysisRun; onRetry: () => void }) {
   const running = run.status === "running";
-  const elapsed = useElapsed(run.startedAt, run.endedAt, running);
   const hints = Object.fromEntries(STEPS.map((s) => [s.id, s.hint]));
   const draftText = run.text.draft ?? "";
   const done = run.steps.filter((s) => s.state === "done").length;
@@ -67,12 +52,12 @@ export function LiveAnalysis({ run, onRetry }: { run: AnalysisRun; onRetry: () =
                 stroke={2}
                 className="text-moss"
               />
-              {done} of {run.steps.length} steps · {elapsed.toFixed(1)} s · {formatCost(run.cost)}
+              {done} of {run.steps.length} steps
             </p>
           </div>
         </div>
         {run.status === "error" && (
-          <Button size="sm" variant="secondary" icon={<RotateCcw />} onClick={onRetry}>
+          <Button size="sm" variant="secondary" onClick={onRetry}>
             Try again
           </Button>
         )}
@@ -113,8 +98,6 @@ function StepRow({
   index: number;
   draftText: string;
 }) {
-  const cost = step.usage.reduce((sum, u) => sum + (u.cost ?? 0), 0);
-  const ms = step.startedAt && step.endedAt ? step.endedAt - step.startedAt : 0;
   const active = step.state === "active";
   const done = step.state === "done";
 
@@ -168,26 +151,15 @@ function StepRow({
           </AnimatePresence>
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <p
-              className={cn(
-                "text-[13.5px] font-medium",
-                step.state === "error" ? "text-risk-700" : "text-ink",
-              )}
-            >
-              {step.label}
-            </p>
-            {(step.model || (step.id === "protect" && (done || active))) && (
-              <span className="text-ink-2 flex items-center gap-2.5 text-xs tabular-nums">
-                <ModelBadge model={step.model ?? null} />
-                {done && cost > 0 && <span>{formatCost(cost)}</span>}
-                {done && ms > 0 && <span className="text-ink-3">{formatMs(ms)}</span>}
-              </span>
+          <p
+            className={cn(
+              "text-[14px] font-medium",
+              step.state === "error" ? "text-risk-700" : "text-ink",
             )}
-          </div>
-          {(active || step.state === "pending") && (
-            <p className="text-ink-2 mt-0.5 text-xs">{hint}</p>
-          )}
+          >
+            {step.label}
+          </p>
+          {active && <p className="text-ink-2 mt-0.5 text-[13px]">{hint}</p>}
 
           {step.tools.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -227,18 +199,12 @@ function StepRow({
 }
 
 function StreamingText({ text, streaming }: { text: string; streaming: boolean }) {
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = box.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [text]);
   return (
     <motion.div
-      ref={box}
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: duration.base, ease: ease.out }}
-      className="border-line-soft bg-paper text-ink mt-2.5 max-h-48 overflow-y-auto rounded-[10px] border px-3.5 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap"
+      className="border-line-soft bg-paper text-ink mt-2.5 rounded-[10px] border px-3.5 py-3 text-[13.5px] leading-relaxed whitespace-pre-wrap"
     >
       {text}
       {streaming && (

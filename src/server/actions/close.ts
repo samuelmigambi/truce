@@ -7,6 +7,7 @@ import type {
   DisputeStage,
   Order,
   OrderStatus,
+  Shop,
 } from "@/lib/domain";
 import type { Cents } from "@/lib/money";
 import { disputeFee, type Ending } from "@/lib/rules/fees";
@@ -86,19 +87,20 @@ export function refundedStatus(order: Order, refunded: Cents): OrderStatus {
  */
 export async function closeCase(
   store: Store,
-  workspaceId: string,
+  shop: Shop,
   kase: Case,
   outcome: CaseOutcome,
   refunded: Cents,
   at: Date,
 ): Promise<Case> {
   const [order, orders, cases] = await Promise.all([
-    store.getOrder(workspaceId, kase.orderId),
-    store.listOrders(workspaceId),
-    store.listCases(workspaceId),
+    store.getOrder(shop.id, kase.orderId),
+    store.listOrders(shop.id),
+    store.listCases(shop.id),
   ]);
   const protectedSale = order ? caseProtection(kase.reason, order).covered : false;
-  const { highVolume } = shopRatio(orders, cases, at.getTime());
+  // Without the shop's sales there's no ratio, so the high-volume fee isn't assumed.
+  const { highVolume } = shopRatio(orders, cases, at.getTime(), shop.orderHistory === "full");
   const figures = closingFigures({
     amount: kase.amount,
     reason: kase.reason,
@@ -116,9 +118,9 @@ export async function closeCase(
     closedAt: at.toISOString(),
     updatedAt: at.toISOString(),
   };
-  await store.saveCase(workspaceId, closed);
+  await store.saveCase(shop.id, closed);
   if (order && refunded > 0) {
-    await store.saveOrder(workspaceId, { ...order, status: refundedStatus(order, refunded) });
+    await store.saveOrder(shop.id, { ...order, status: refundedStatus(order, refunded) });
   }
   return closed;
 }

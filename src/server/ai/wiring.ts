@@ -1,44 +1,26 @@
 import "server-only";
 
-import type { Workspace } from "@/lib/domain";
+import type { Shop } from "@/lib/domain";
 import { seedCaseId } from "@/server/demo/seed";
 import { addSpend, dailySpendCap, rateLimit, spendToday } from "@/server/limits";
-import { paypal } from "@/server/paypal";
-import { syncDisputes, type SyncResult } from "@/server/paypal/sync";
+import { syncShopNow } from "@/server/paypal/shop-sync";
+import type { SyncResult } from "@/server/paypal/sync";
 import { getStore } from "@/server/store";
-import { Tavily } from "@/server/tavily";
 import type { Budget } from "./budget";
 import { tokenFactory } from "./client";
 import { modelsFromEnv } from "./models";
-import { analyzeCase, type AnalyzeDeps, type WebReader } from "./pipeline";
-import { PAGE_MS } from "./pipeline/gather";
+import { analyzeCase, type AnalyzeDeps } from "./pipeline";
 import { publicPhotoReader } from "./photos";
 import type { SweepDeps } from "./sweep";
+import { webReader } from "./web";
+
+export { webReader } from "./web";
 
 /**
  * The real services behind the agent, for route handlers: the store, Token Factory, Tavily, the
- * limits and the photos on disk. Everything under src/server/ai takes these as arguments, so its
- * tests run on fakes.
+ * limits, the shop's own PayPal connection and the photos on disk. Everything under src/server/ai
+ * takes these as arguments, so its tests run on fakes.
  */
-
-/**
- * Tavily, for reading the listing and policies as the buyer saw them, with every request cut off
- * at PAGE_MS, so a slow page falls back to the catalog instead of holding up the analysis.
- */
-export function webReader(): WebReader | null {
-  const key = process.env.TAVILY_API_KEY?.trim();
-  if (!key) return null;
-  const timed: typeof fetch = (input, init) =>
-    fetch(input, {
-      ...init,
-      signal: AbortSignal.any([
-        AbortSignal.timeout(PAGE_MS),
-        ...(init?.signal ? [init.signal] : []),
-      ]),
-    });
-  const tavily = new Tavily(key, timed);
-  return { extract: (urls) => tavily.extract(urls) };
-}
 
 export function liveBudget(): Budget {
   return {
@@ -48,19 +30,19 @@ export function liveBudget(): Budget {
   };
 }
 
-/** What an analysis of `caseId` needs in this workspace. */
-export function analysisDeps(workspace: Workspace, caseId: string, live: boolean): AnalyzeDeps {
+/** What an analysis of `caseId` needs in this shop. Only a sample shop's seeded cases replay. */
+export function analysisDeps(shop: Shop, caseId: string, live: boolean): AnalyzeDeps {
   return {
     store: getStore(),
     client: tokenFactory(),
-    workspace,
+    shop,
     caseId,
     budget: liveBudget(),
     live,
     web: webReader(),
     siteUrl: process.env.SITE_URL ?? null,
     readPhoto: publicPhotoReader(),
-    seedCaseId: workspace.kind === "demo" ? seedCaseId(caseId) : null,
+    seedCaseId: shop.kind === "sample" ? seedCaseId(caseId) : null,
     models: modelsFromEnv(),
     spendCap: dailySpendCap(),
   };
@@ -81,26 +63,32 @@ export function syncLabel(result: SyncResult): string {
   return `From PayPal: ${parts.join(" and ")}`;
 }
 
-/** The overnight check in this workspace; `full` also prepares each new case's analysis. */
-export function sweepDeps(workspace: Workspace, full: boolean): SweepDeps {
+export const SAMPLE_SYNC_LABEL =
+  "This sample shop simulates PayPal, so there are no new disputes to fetch";
+export const UNCONNECTED_SYNC_LABEL =
+  "This shop isn't connected to PayPal, so there are no new disputes to fetch";
+
+/**
+ * The overnight check in this shop; `full` also prepares each new case's analysis. A real shop
+ * syncs through its own PayPal connection first; a sample shop says it simulates PayPal.
+ */
+export function sweepDeps(shop: Shop, full: boolean): SweepDeps {
   const store = getStore();
-  const client = paypal();
   const sync: SweepDeps["sync"] =
-    workspace.kind === "live"
-      ? client
-        ? async () => ({ label: syncLabel(await syncDisputes(store, workspace, client)) })
-        : null
-      : async () => ({
-          label: "This demo copy simulates PayPal, so there are no new disputes to fetch",
-        });
+    shop.kind === "sample"
+      ? async () => ({ label: SAMPLE_SYNC_LABEL })
+      : async () => {
+          const result = await syncShopNow(store, shop);
+          return { label: result ? syncLabel(result) : UNCONNECTED_SYNC_LABEL };
+        };
   return {
     store,
     client: tokenFactory(),
-    workspace,
+    shop,
     budget: liveBudget(),
     models: modelsFromEnv(),
     spendCap: dailySpendCap(),
     sync,
-    analyze: full ? (caseId) => analyzeCase(analysisDeps(workspace, caseId, false)) : null,
+    analyze: full ? (caseId) => analyzeCase(analysisDeps(shop, caseId, false)) : null,
   };
 }

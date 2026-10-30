@@ -89,20 +89,30 @@ export function OutcomeChip({
 const DUE_TEXT = { risk: "text-risk-700", warn: "text-warn-700", neutral: "text-ink-2" } as const;
 
 /** "Due in 3 days", colored by how close PayPal's deadline is. */
-export function DueLabel({ dueAt, className }: { dueAt: string | null; className?: string }) {
+export function DueLabel({
+  dueAt,
+  size = "sm",
+  className,
+}: {
+  dueAt: string | null;
+  size?: "sm" | "md";
+  className?: string;
+}) {
   const now = useNow();
-  if (!dueAt) return <span className={cn("text-ink-3 text-[13px]", className)}>No deadline</span>;
+  const text = size === "md" ? "text-[15px]" : "text-[13px]";
+  if (!dueAt) return <span className={cn("text-ink-3", text, className)}>No deadline</span>;
   const due = new Date(dueAt);
   const tone = URGENCY_TONE[urgency(due, new Date(now))];
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 text-[13px] font-medium whitespace-nowrap",
+        "inline-flex items-center gap-1.5 font-medium whitespace-nowrap",
+        text,
         DUE_TEXT[tone],
         className,
       )}
     >
-      <Clock className="size-3.5" />
+      <Clock className={size === "md" ? "size-4" : "size-3.5"} />
       {dueLabel(due, new Date(now))}
     </span>
   );

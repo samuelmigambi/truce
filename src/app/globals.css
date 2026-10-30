@@ -1,20 +1,35 @@
 @import "tailwindcss";
 
+/* `dark:` follows the theme the person picked (see src/lib/theme.ts), not only the system's. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /*
  * Truce's design tokens. Brand colors come from brand/tokens/colors.css; the functional tones
- * (warn for "due soon", risk for "overdue" or "lost") and ink tints are ours.
+ * (warn for "due soon", risk for "overdue" or "lost") and ink tints are ours. The dark theme
+ * gives the same names new values further down, so components never ask which theme is on.
  */
 @theme {
   --color-lemon: #ddeb94;
   --color-lemon-deep: #cbdc72;
-  --color-ink: #1e2614;
-  --color-ink-2: #565d4c;
-  --color-ink-3: #8a9080;
+  /* Text: ink for the main words, ink-2 for supporting text, ink-3 for hints and placeholders. */
+  --color-ink: #161c0f;
+  --color-ink-2: #454b3c;
+  --color-ink-3: #6c7264;
   --color-cream: #fafbf3;
   --color-mist: #f1f6d2;
   --color-moss: #5c7524;
   --color-moss-deep: #4a5f1c;
   --color-paper: #ffffff;
+  --color-paper-hover: #fdfdf8;
+  /* The app's outer frame and sidebar: white here, the deepest level in the dark theme. */
+  --color-frame: #ffffff;
+  /* The border around mist surfaces. */
+  --color-mist-line: #e3eab8;
+  /* Text on lemon, which stays bright in both themes, so this stays dark. */
+  --color-on-lemon: #1e2614;
+  /* The brand's ink and cream that never change with the theme, for always-dark brand areas. */
+  --color-forest: #1e2614;
+  --color-chalk: #fafbf3;
 
   /* Ink at 6–16% for borders and quiet fills. */
   --color-line: rgb(30 38 20 / 0.1);
@@ -112,6 +127,63 @@
   }
 }
 
+/*
+ * The dark theme: neutral charcoals rather than black, in clear steps (frame, page, card, hover)
+ * so each surface reads as its own level, soft off-white text, and color kept for accents only
+ * (lemon, links, status). Wick & Ember's palette isn't here: the storefront always stays light.
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-ink: #ececea;
+  --color-ink-2: #a8a8a4;
+  --color-ink-3: #7a7a76;
+  --color-frame: #121212;
+  --color-cream: #18181a;
+  --color-paper: #212123;
+  --color-paper-hover: #27272a;
+  --color-mist: #26272a;
+  --color-mist-line: #34353a;
+  --color-moss: #bccb7c;
+  --color-moss-deep: #d2de94;
+
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-soft: rgb(255 255 255 / 0.055);
+  --color-line-strong: rgb(255 255 255 / 0.14);
+  --color-wash: rgb(255 255 255 / 0.04);
+
+  --color-warn-50: #2f2716;
+  --color-warn-200: #524120;
+  --color-warn-500: #e0a63c;
+  --color-warn-700: #f0c46e;
+  --color-risk-50: #321c19;
+  --color-risk-200: #59302a;
+  --color-risk-500: #e46c50;
+  --color-risk-700: #f3a28e;
+
+  --color-series-1: #ececea;
+  --color-series-2: #bccb7c;
+  --color-series-3: #75757a;
+  --color-series-4: #48484c;
+
+  --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -8px rgb(0 0 0 / 0.5);
+  --shadow-dialog: 0 2px 6px rgb(0 0 0 / 0.25), 0 32px 80px -16px rgb(0 0 0 / 0.6);
+  --shadow-lift: 0 1px 1px rgb(0 0 0 / 0.2), 0 2px 6px -2px rgb(0 0 0 / 0.3);
+}
+
+/*
+ * Lemon stays bright in the dark theme, so whatever sits on it keeps dark text. Ink becomes the
+ * light color there, so lemon text on an ink badge turns a deep olive to stay readable.
+ */
+[data-theme="dark"] :is(.bg-lemon, .bg-lemon-deep, .hover\:bg-lemon:hover),
+[data-theme="dark"] :is(.bg-lemon, .bg-lemon-deep) :is(.text-ink, .text-ink-2) {
+  color: var(--color-on-lemon);
+}
+[data-theme="dark"] .bg-ink.text-lemon,
+[data-theme="dark"] .bg-ink .text-lemon {
+  color: #45531f;
+}
+
 /* The shop's fonts are set on its layout, not the root, so they resolve where they're used. */
 @theme inline {
   --font-serif: var(--font-fraunces), Georgia, serif;
@@ -133,7 +205,7 @@
 
   ::selection {
     background: var(--color-lemon);
-    color: var(--color-ink);
+    color: var(--color-on-lemon);
   }
 
   button:not(:disabled),
@@ -174,6 +246,14 @@
     );
     animation: var(--animate-shimmer);
     pointer-events: none;
+  }
+  [data-theme="dark"] .shimmer:not(.shimmer-lemon)::after {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgb(255 255 255 / 0.06) 50%,
+      transparent 100%
+    );
   }
   .shimmer-lemon::after {
     background: linear-gradient(

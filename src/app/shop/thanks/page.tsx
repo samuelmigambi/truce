@@ -66,15 +66,16 @@ export default async function ThanksPage({
       </div>
 
       <div className="border-hairline mt-14 rounded-[12px] border border-dashed p-5 text-left font-sans">
-        <p className="text-espresso text-sm font-medium">This is a demo shop</p>
+        <p className="text-espresso text-sm font-medium">This is a demo storefront</p>
         <p className="text-espresso-2 mt-1 text-sm leading-relaxed">
-          Your sandbox order now sits in Truce, where the before-shipping checks run on it.
+          Your sandbox order shows up in every Truce shop connected to this sandbox app, where the
+          checks before shipping run on it.
         </p>
         <Link
-          href="/app/orders"
+          href="/app"
           className="text-ember mt-3 inline-flex items-center gap-1 text-sm font-medium underline-offset-4 hover:underline"
         >
-          See it in Truce
+          Open Truce
           <ArrowUpRight className="size-3.5" />
         </Link>
       </div>

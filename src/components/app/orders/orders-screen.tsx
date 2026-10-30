@@ -7,7 +7,7 @@ import {
   CircleAlert,
   MapPin,
   PackageCheck,
-  Plus,
+  PackageSearch,
   RotateCcw,
   ShieldCheck,
   ShieldX,
@@ -17,19 +17,19 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { OrderWithChecks } from "@/lib/api-types";
-import { errorMessage } from "@/lib/client/api";
-import { formatDate } from "@/lib/client/format";
-import { useOrders, useSession } from "@/lib/client/hooks";
-import { ORDER_STATUS } from "@/lib/client/labels";
-import { useNow } from "@/lib/client/now";
-import { formatUsd } from "@/lib/money";
+import { errorMessage, shopHref } from "@/lib/client/api";
+import { useOrders } from "@/lib/client/hooks";
+import { ORDER_STATUS, trackingBlocker } from "@/lib/client/labels";
+import { useMoney, useShop, useShopDates } from "@/lib/client/shop-context";
 import { duration, ease, spring } from "../../motion";
-import { Button } from "../../ui/button";
+import { Button, ButtonLink } from "../../ui/button";
 import { Chip } from "../../ui/chip";
 import { cn } from "../../ui/cn";
 import { EmptyState } from "../../ui/empty-state";
+import { Notice } from "../../ui/notice";
 import { SegmentedControl } from "../../ui/segmented";
 import { Skeleton } from "../../ui/skeleton";
+import { Tooltip } from "../../ui/tooltip";
 import { PageHeader, Screen } from "../page-header";
 import { FlaggedOrder } from "./flagged-order";
 import { TrackingDialog } from "./tracking-dialog";
@@ -48,20 +48,25 @@ function sortOrders(orders: OrderWithChecks[]): OrderWithChecks[] {
   });
 }
 
-/** Orders, to-ship first, with the checks that keep each one protected before it leaves. */
+/**
+ * Orders, to-ship first, with the checks that keep each one protected before it leaves. When the
+ * shop's PayPal app has no Transaction Search, Truce only knows the orders that have a dispute,
+ * so the screen says so instead of pretending to check shipments it can't see.
+ */
 export function OrdersScreen() {
+  const shop = useShop();
   const { data, error, mutate } = useOrders();
-  const shopName = useSession().data?.workspace.shopName ?? "Wick & Ember";
   const focus = useSearchParams().get("order");
   const [view, setView] = useState<View>("to_ship");
   const [limit, setLimit] = useState(PAGE);
   const [tracking, setTracking] = useState<OrderWithChecks | null>(null);
 
+  const partial = (data?.history ?? shop.orderHistory) === "disputes";
   const orders = sortOrders(data?.orders ?? []);
-  const shipping = orders.filter(toShip);
+  const shipping = partial ? [] : orders.filter(toShip);
   const flagged = shipping.filter((o) => !o.checks.covered);
   const focused = focus ? orders.find((o) => o.id === focus) : undefined;
-  const effectiveView: View = focused && !toShip(focused) ? "all" : view;
+  const effectiveView: View = partial || (focused && !toShip(focused)) ? "all" : view;
   const list = effectiveView === "to_ship" ? shipping : orders;
   const shown = effectiveView === "all" && !focused ? list.slice(0, limit) : list;
 
@@ -77,10 +82,7 @@ export function OrdersScreen() {
 
   return (
     <Screen>
-      <PageHeader
-        title="Orders"
-        description="Checked before they ship, so every one stays covered by Seller Protection"
-      />
+      <PageHeader title="Orders" />
 
       {error && !data ? (
         <div className="rounded-card border-line bg-paper mt-8 border">
@@ -96,40 +98,64 @@ export function OrdersScreen() {
         <OrdersSkeleton />
       ) : (
         <>
+          {partial && <HistoryNotice />}
+
           {flagged.length > 0 && (
             <div className="mt-6 space-y-4">
               {flagged.map((o, i) => (
-                <FlaggedOrder key={o.id} order={o} shopName={shopName} index={i} />
+                <FlaggedOrder key={o.id} order={o} index={i} />
               ))}
             </div>
           )}
 
           <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
-            <SegmentedControl
-              label="Which orders"
-              value={effectiveView}
-              onChange={setView}
-              options={[
-                { value: "to_ship", label: "To ship", count: shipping.length },
-                { value: "all", label: "All orders", count: orders.length },
-              ]}
-            />
-            <p className="text-ink-2 text-[13px]">
-              {flagged.length === 0
-                ? shipping.length
-                  ? "Every order to ship is protected as it stands"
-                  : "Nothing waiting to ship"
-                : `${flagged.length} ${flagged.length === 1 ? "order needs" : "orders need"} a look before shipping`}
-            </p>
+            {partial ? (
+              <p className="text-ink text-sm font-medium">
+                {orders.length} {orders.length === 1 ? "order" : "orders"} with a dispute
+              </p>
+            ) : (
+              <>
+                <SegmentedControl
+                  label="Which orders"
+                  value={effectiveView}
+                  onChange={setView}
+                  options={[
+                    { value: "to_ship", label: "To ship", count: shipping.length },
+                    { value: "all", label: "All orders", count: orders.length },
+                  ]}
+                />
+                <p className="text-ink-2 text-[13px]">
+                  {flagged.length === 0
+                    ? shipping.length
+                      ? "Every order to ship is protected as it stands"
+                      : "Nothing waiting to ship"
+                    : `${flagged.length} ${flagged.length === 1 ? "order needs" : "orders need"} a look before shipping`}
+                </p>
+              </>
+            )}
           </div>
 
           <div className="rounded-card border-line bg-paper mt-4 overflow-hidden border">
             {list.length === 0 ? (
-              <EmptyState
-                icon={<PackageCheck />}
-                title="All shipped"
-                description="New orders show up here with their checks as soon as they're paid."
-              />
+              partial ? (
+                <EmptyState
+                  icon={<PackageSearch />}
+                  title="No orders with disputes"
+                  description="When a buyer opens a dispute, its order shows up here with everything PayPal knows about it."
+                />
+              ) : orders.length === 0 ? (
+                <EmptyState
+                  icon={<PackageSearch />}
+                  title="No orders yet"
+                  description="New PayPal orders show up here with their checks as soon as they're paid."
+                />
+              ) : (
+                <EmptyState
+                  icon={<PackageCheck />}
+                  title="All shipped"
+                  description="New orders show up here with their checks as soon as they're paid."
+                />
+              )
             ) : (
               <>
                 <div className="border-line-soft text-ink-3 hidden grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_88px_minmax(0,1.5fr)_minmax(0,1.2fr)] gap-4 border-b px-5 py-2.5 text-xs font-medium lg:grid">
@@ -163,6 +189,7 @@ export function OrdersScreen() {
                         <OrderRow
                           order={o}
                           focused={o.id === focus}
+                          shippable={!partial && toShip(o)}
                           onAddTracking={() => setTracking(o)}
                         />
                       </motion.li>
@@ -191,19 +218,49 @@ export function OrdersScreen() {
   );
 }
 
+/** Transaction Search is off for the shop's PayPal app: what that means, and how to turn it on. */
+function HistoryNotice() {
+  const shop = useShop();
+  return (
+    <Notice
+      className="mt-6"
+      icon={<PackageSearch />}
+      title="Truce only sees the orders that have a dispute"
+      action={
+        <ButtonLink href={shopHref(shop.id, "settings#paypal")} size="sm" variant="secondary">
+          Open PayPal settings
+        </ButtonLink>
+      }
+    >
+      Transaction Search is off for this PayPal app, so Truce can&rsquo;t check orders before they
+      ship or work out the claims ratio. To turn it on, open the app in PayPal&rsquo;s developer
+      dashboard (Apps &amp; Credentials), tick <span className="text-ink">Transaction search</span>{" "}
+      under its features, then check the connection in settings.
+    </Notice>
+  );
+}
+
 function OrderRow({
   order,
   focused,
+  shippable,
   onAddTracking,
 }: {
   order: OrderWithChecks;
   focused: boolean;
+  /** It's waiting to ship, and Truce sees the whole order history. */
+  shippable: boolean;
   onAddTracking: () => void;
 }) {
-  const now = useNow();
+  const shop = useShop();
+  const dates = useShopDates();
+  const money = useMoney();
   const eligible = order.checks.checks.find((c) => c.id === "eligibility");
   const address = order.checks.checks.find((c) => c.id === "address");
-  const shipping = toShip(order);
+  const blocked = trackingBlocker(shop);
+  // A sample shop only records tracking; a real one sends it to PayPal.
+  const uploadedLabel =
+    shop.kind === "sample" ? "Recorded on the order" : "Added to the PayPal order";
 
   return (
     <div
@@ -216,7 +273,11 @@ function OrderRow({
         <p className="text-ink flex items-center gap-2 text-[14px] font-medium">
           {order.id}
           {order.caseId && (
-            <Link href={`/app/cases/${encodeURIComponent(order.caseId)}`} className="inline-flex">
+            <Link
+              href={shopHref(shop.id, `cases/${encodeURIComponent(order.caseId)}`)}
+              className="inline-flex rounded-[8px]"
+              aria-label={`Open the dispute on ${order.id}`}
+            >
               <Chip tone="warn" size="sm">
                 Dispute
               </Chip>
@@ -224,16 +285,16 @@ function OrderRow({
           )}
         </p>
         <p className="text-ink-2 truncate text-[13px]">
-          {order.buyer.name} · {formatDate(order.placedAt, now)}
+          {order.buyer.name} · {dates.date(order.placedAt)}
         </p>
       </div>
 
       <p className="text-ink text-right text-[14px] font-medium tabular-nums lg:order-3">
-        {formatUsd(order.amount)}
+        {money(order.amount)}
       </p>
 
       <p className="text-ink-2 col-span-2 truncate text-[13px] lg:order-2 lg:col-span-1">
-        {order.items.map((i) => `${i.quantity} × ${i.name}`).join(", ")}
+        {order.items.map((i) => `${i.quantity} × ${i.name}`).join(", ") || "Items not listed"}
       </p>
 
       <div className="col-span-2 flex flex-wrap items-center gap-1.5 lg:order-4 lg:col-span-1">
@@ -262,29 +323,39 @@ function OrderRow({
             </span>
             {order.tracking.uploaded && (
               <span
-                title="Added to the PayPal order"
+                title={uploadedLabel}
                 className="bg-lemon flex size-4 shrink-0 items-center justify-center rounded-full"
               >
                 <Check className="text-ink size-2.5" strokeWidth={3} />
+                <span className="sr-only">{uploadedLabel}</span>
               </span>
             )}
           </span>
-        ) : shipping ? (
-          <Button
-            size="sm"
-            variant={order.checks.covered ? "primary" : "secondary"}
-            icon={<Plus />}
-            onClick={onAddTracking}
-          >
-            Add tracking
-          </Button>
+        ) : shippable ? (
+          blocked ? (
+            <Tooltip content={blocked}>
+              <span tabIndex={0} className="rounded-btn inline-flex">
+                <Button size="sm" variant="secondary" disabled>
+                  Add tracking
+                </Button>
+              </span>
+            </Tooltip>
+          ) : (
+            <Button
+              size="sm"
+              variant={order.checks.covered ? "primary" : "secondary"}
+              onClick={onAddTracking}
+            >
+              Add tracking
+            </Button>
+          )
         ) : (
           <span className="text-ink-3 text-[13px]">No tracking</span>
         )}
         <Chip
-          tone={shipping ? "lemon" : order.status === "refunded" ? "neutral" : "outline"}
+          tone={shippable ? "lemon" : order.status === "refunded" ? "neutral" : "outline"}
           size="sm"
-          dot={shipping}
+          dot={shippable}
         >
           {ORDER_STATUS[order.status]}
         </Chip>
@@ -317,7 +388,7 @@ function CheckChip({
 
 function OrdersSkeleton() {
   return (
-    <div className="mt-8 space-y-4">
+    <div className="mt-8 space-y-4" aria-busy="true" aria-label="Loading the orders">
       <Skeleton className="rounded-btn h-9 w-56" />
       <div className="divide-line-soft rounded-card border-line bg-paper divide-y overflow-hidden border">
         {[0, 1, 2, 3, 4].map((i) => (
@@ -327,7 +398,7 @@ function OrdersSkeleton() {
               <Skeleton className="h-3 w-32" />
             </div>
             <Skeleton className="h-3 flex-1" />
-            <Skeleton className="rounded-chip h-5 w-40" />
+            <Skeleton className="rounded-chip h-5 w-40 max-sm:hidden" />
           </div>
         ))}
       </div>

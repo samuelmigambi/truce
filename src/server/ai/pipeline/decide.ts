@@ -1,8 +1,8 @@
 import "server-only";
 
 import { z } from "zod";
-import type { Move, Recommendation } from "@/lib/domain";
-import { formatUsd, type Cents } from "@/lib/money";
+import type { CurrencyCode, Move, Recommendation } from "@/lib/domain";
+import { formatMoney, type Cents } from "@/lib/money";
 import { cheapestMove, costMoves, type Evidence, type MoveCost } from "@/lib/rules/options";
 import type { ProtectionResult } from "@/lib/rules/protection";
 import {
@@ -108,7 +108,7 @@ export async function weighStep(
         messages: [
           {
             role: "user",
-            content: `${caseBlock(run.kase, run.now)}\n\n${protectionBlock(protection)}\n\nEvidence records:\n${evidenceBlock(records)}\n\nJudge the strength of the seller's evidence and record it.`,
+            content: `${caseBlock(run.kase, run.now, run.deps.shop)}\n\n${protectionBlock(protection)}\n\nEvidence records:\n${evidenceBlock(records, run.deps.shop.timeZone)}\n\nJudge the strength of the seller's evidence and record it.`,
           },
         ],
         name: "record_strength",
@@ -152,7 +152,7 @@ export async function weighStep(
       type: "step",
       step: "weigh",
       state: "done",
-      label: `Evidence is ${strength} · ${MOVE_GERUND[cheapest.move]} costs least (${formatUsd(cheapest.expected)} expected)`,
+      label: `Evidence is ${strength} · ${MOVE_GERUND[cheapest.move]} costs least (${formatMoney(cheapest.expected, run.deps.shop.currency)} expected)`,
       model,
     });
   }
@@ -161,7 +161,12 @@ export async function weighStep(
 
 // ---------- Decide ----------
 
-export function decisionSchema(ids: Set<string>, options: MoveCost[], cheapest: MoveCost) {
+export function decisionSchema(
+  ids: Set<string>,
+  options: MoveCost[],
+  cheapest: MoveCost,
+  currency: CurrencyCode,
+) {
   const available = options.filter((o) => o.available).map((o) => o.move) as [Move, ...Move[]];
   const Cited = z.object({
     text: z.string().min(8).max(320).describe("One plain sentence."),
@@ -199,7 +204,7 @@ export function decisionSchema(ids: Set<string>, options: MoveCost[], cheapest: 
         ctx.addIssue({
           code: "custom",
           path: ["departure"],
-          message: `${v.move} isn't the cheapest available move (${cheapest.move} is, at ${formatUsd(cheapest.expected)} expected). Explain why in departure, citing evidence, or choose ${cheapest.move}.`,
+          message: `${v.move} isn't the cheapest available move (${cheapest.move} is, at ${formatMoney(cheapest.expected, currency)} expected). Explain why in departure, citing evidence, or choose ${cheapest.move}.`,
         });
       }
       if (!new RegExp(`^\\W*${MOVE_WORD[v.move]}\\b`, "i").test(v.headline)) {
@@ -237,18 +242,20 @@ export function fallbackRecommendation(
   records: PromptRecord[],
   protection: ProtectionResult,
   weighed: Weighed,
+  currency: CurrencyCode,
 ): Recommendation {
   const { cheapest, offer } = weighed;
+  const expected = formatMoney(cheapest.expected, currency);
   const cite = (kind: string) => records.filter((r) => r.kind === kind).map((r) => r.id);
   const money = [...cite("payment"), ...cite("tracking")].slice(0, 2);
   const anchor = money.length ? money : records.slice(0, 1).map((r) => r.id);
   return {
     move: cheapest.move,
     confidence: "low",
-    headline: `${MOVE_WORD[cheapest.move]}: it costs least by Truce's numbers, ${formatUsd(cheapest.expected)} expected.`,
+    headline: `${MOVE_WORD[cheapest.move]}: it costs least by Truce's numbers, ${expected} expected.`,
     reasons: [
       {
-        text: `By Truce's rules, ${MOVE_GERUND[cheapest.move]} has the lowest expected cost: ${formatUsd(cheapest.expected)}.`,
+        text: `By Truce's rules, ${MOVE_GERUND[cheapest.move]} has the lowest expected cost: ${expected}.`,
         evidence: anchor,
       },
       {
@@ -269,14 +276,15 @@ export async function decideStep(
   weighed: Weighed,
 ): Promise<Recommendation> {
   const model = run.deps.models.decide;
+  const { shop } = run.deps;
   run.emit({ type: "step", step: "decide", state: "start", label: "Choosing the move", model });
   const ids = new Set(records.map((r) => r.id));
   const content = [
-    caseBlock(run.kase, run.now),
+    caseBlock(run.kase, run.now, shop),
     protectionBlock(protection),
     `Evidence strength, judged from the records: ${weighed.strength}.${weighed.why ? ` ${weighed.why}` : ""}`,
-    costsBlock(weighed.options, weighed.cheapest, weighed.offer, run.ratio),
-    `Evidence records:\n${evidenceBlock(records)}`,
+    costsBlock(weighed.options, weighed.cheapest, weighed.offer, run.ratio, shop.currency),
+    `Evidence records:\n${evidenceBlock(records, shop.timeZone)}`,
     "Decide what the seller should do, and record it.",
   ].join("\n\n");
   try {
@@ -289,11 +297,11 @@ export async function decideStep(
         const a = await askForJson({
           client: run.client,
           model,
-          system: decideSystem(),
+          system: decideSystem(shop),
           messages: [{ role: "user", content }],
           name: "record_decision",
           description: "Record the recommended move, with reasons that cite evidence IDs.",
-          schema: decisionSchema(ids, weighed.options, weighed.cheapest),
+          schema: decisionSchema(ids, weighed.options, weighed.cheapest, shop.currency),
           thinking: true,
           maxTokens: 8000,
           signal,
@@ -318,7 +326,7 @@ export async function decideStep(
       model,
       error,
       `Ultra ${failureReason(error)}, so this is the cheapest move by Truce's numbers. Review it before approving`,
-      fallbackRecommendation(records, protection, weighed),
+      fallbackRecommendation(records, protection, weighed, shop.currency),
     );
   }
 }

@@ -9,8 +9,8 @@ import type {
   Order,
   OrderItem,
   ProtectionStatus,
+  Shop,
   TrackingEvent,
-  Workspace,
 } from "@/lib/domain";
 import { caseProtection } from "@/lib/rules/protection";
 import { closingFigures } from "@/server/actions/close";
@@ -30,12 +30,13 @@ import { STORY_CASES, STORY_ORDERS, TO_SHIP_IDS, type StoryOrder, type When } fr
 import { deliveryTime, scanHistory, uspsNumber, type DeliveredAt } from "./usps";
 
 /**
- * The Wick & Ember demo: about 240 orders over 90 days, five open cases that tell the story, twelve
- * closed ones for the dashboard, and two orders waiting to ship. It's deterministic: the same
- * random seed every time, and every date hangs from the midnight (UTC) before the copy was made.
+ * The Wick & Ember sample shop: about 240 orders over 90 days, five open cases that tell the
+ * story, twelve closed ones for the dashboard, and two orders waiting to ship. It's deterministic:
+ * the same random seed every time, and every date hangs from the midnight (UTC) before the shop
+ * was seeded.
  */
 
-/** Bumped whenever the seed changes, so stale copies re-seed and cached analyses are redone. */
+/** Bumped whenever the seed changes, so stale sample shops re-seed and cached analyses are redone. */
 export const SEED_VERSION = "wick-ember-1";
 
 const MINUTE = 60_000;
@@ -44,26 +45,26 @@ const DAY = 24 * HOUR;
 /** The newest order number; the two orders waiting to ship are always W-1101 and W-1102. */
 const LAST_ORDER_NUMBER = 1102;
 
-/** Midnight UTC on the day the copy was made. Copies made the same day are identical. */
+/** Midnight UTC on the day the shop was seeded. Shops seeded the same day are identical. */
 export function seedAnchor(createdAt: string): number {
   const d = new Date(createdAt);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
 /**
- * The seed version plus the day its dates hang from, as stored on the workspace. Key cached
+ * The seed version plus the day its dates hang from, as stored on the shop. Key cached
  * analyses of seeded cases by this, so a replayed analysis cites the same dates the copy shows.
  */
 export function seedVersionFor(createdAt: string): string {
   return `${SEED_VERSION}@${new Date(seedAnchor(createdAt)).toISOString().slice(0, 10)}`;
 }
 
-/** Whether a workspace was seeded by this version of the seed. */
+/** Whether a sample shop was seeded by this version of the seed. */
 export function isCurrentSeed(seedVersion: string | null): boolean {
   return seedVersion?.split("@")[0] === SEED_VERSION;
 }
 
-/** Every seeded case's ID: the same in every demo copy, such as "demo-inr-86". */
+/** Every seeded case's ID: the same in every sample shop, such as "demo-inr-86". */
 export const SEED_CASE_IDS: readonly string[] = STORY_CASES.map((c) => c.id);
 
 /** The five open cases, in the order the story tells them. */
@@ -203,20 +204,22 @@ export function seedOf(createdAt: string): DemoSeed {
 }
 
 /**
- * Writes a fresh seed into the workspace, replacing whatever was there, and marks the version.
- * On Firestore the seed isn't written at all: the store works it out on read from the copy's
- * creation day (see SeededStore), so a new copy is one small write. Other stores get the records
- * themselves, in one go where they can. `fresh` (a brand-new workspace) skips removing old ones.
+ * Writes a fresh seed into a sample shop, replacing whatever was there, and marks the version and
+ * the moment its dates hang from. On Firestore the seed isn't written at all: the store works it
+ * out on read from the seed's day (see SeededStore), so seeding is one small write. Other stores
+ * get the records themselves, in one go where they can. `fresh` (a brand-new shop) skips
+ * removing old ones.
  */
-export async function seedDemo(
+export async function seedSample(
   store: Store,
-  workspace: Workspace,
-  options: { fresh?: boolean } = {},
-): Promise<Workspace> {
-  const seed = seedOf(workspace.createdAt);
-  const seeded: Workspace = { ...workspace, seedVersion: seedVersionFor(workspace.createdAt) };
+  shop: Shop,
+  options: { fresh?: boolean; now?: Date } = {},
+): Promise<Shop> {
+  const at = (options.now ?? new Date()).toISOString();
+  const seed = seedOf(at);
+  const seeded: Shop = { ...shop, seedVersion: seedVersionFor(at), seededAt: at, updatedAt: at };
   const scans = {
-    key: pendingScansKey(workspace.id),
+    key: pendingScansKey(shop.id),
     value: seed.pendingScans,
     ttlSeconds: PENDING_SCANS_TTL_SECONDS,
   };
@@ -224,23 +227,20 @@ export async function seedDemo(
     const records = seedsOnRead(store)
       ? { orders: [], cases: [], events: {} }
       : { orders: seed.orders, cases: seed.cases, events: seed.events };
-    await store.replaceWorkspace(
-      { workspace: seeded, ...records, cache: [scans] },
-      options.fresh ?? false,
-    );
+    await store.replaceShop({ shop: seeded, ...records, cache: [scans] }, options.fresh ?? false);
     return seeded;
   }
-  await store.clearWorkspace(workspace.id);
+  await store.clearShop(shop.id);
   const writes: (() => Promise<void>)[] = [
-    ...seed.orders.map((order) => () => store.saveOrder(workspace.id, order)),
-    ...seed.cases.map((kase) => () => store.saveCase(workspace.id, kase)),
+    ...seed.orders.map((order) => () => store.saveOrder(shop.id, order)),
+    ...seed.cases.map((kase) => () => store.saveCase(shop.id, kase)),
     ...Object.entries(seed.events).flatMap(([caseId, events]) =>
-      events.map((event) => () => store.addEvent(workspace.id, caseId, event)),
+      events.map((event) => () => store.addEvent(shop.id, caseId, event)),
     ),
   ];
   await runAll(writes, 48);
-  await savePendingScans(store, workspace.id, seed.pendingScans);
-  await store.saveWorkspace(seeded);
+  await savePendingScans(store, shop.id, seed.pendingScans);
+  await store.saveShop(seeded);
   return seeded;
 }
 

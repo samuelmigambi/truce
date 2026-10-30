@@ -4,36 +4,43 @@ import useSWR, { mutate } from "swr";
 import type {
   CaseResponse,
   CasesResponse,
+  ChatsResponse,
   Metrics,
+  NotificationsResponse,
   OrdersResponse,
-  SessionResponse,
   StatusResponse,
 } from "@/lib/api-types";
-import { fetcher } from "./api";
+import { fetcher, shopApi } from "./api";
+import { chatsKey } from "./chat";
+import { ME_KEY, useShopId } from "./shop-context";
 
 /**
- * The app's data, through SWR. Every hook waits for the session first: the first request makes
- * the visitor's demo copy and sets its cookie, and parallel first requests would each make one.
+ * The app's data, through SWR. Every key sits under the shop's own API path, so two shops can
+ * never share a cache entry, even when their sample cases have the same IDs.
  */
+
+export const keys = {
+  shop: (shopId: string) => shopApi(shopId),
+  cases: (shopId: string) => shopApi(shopId, "cases"),
+  case: (shopId: string, caseId: string) => shopApi(shopId, `cases/${encodeURIComponent(caseId)}`),
+  orders: (shopId: string) => shopApi(shopId, "orders"),
+  metrics: (shopId: string) => shopApi(shopId, "metrics"),
+  notifications: (shopId: string) => shopApi(shopId, "notifications"),
+  chats: chatsKey,
+  me: ME_KEY,
+  status: "/api/status",
+} as const;
 
 const REACTION_WINDOW = 4 * 60_000;
 
-export function useSession() {
-  return useSWR<SessionResponse>("/api/session", fetcher, { revalidateOnFocus: false });
-}
-
-function useReady(): boolean {
-  return Boolean(useSession().data);
-}
-
-/** Recently approved cases get their scripted reactions on the next read, so we read again soon. */
+/** A case approved a moment ago may hear back soon (a buyer, PayPal), so it's read again soon. */
 function recentlyActive(updatedAt: string, closed: boolean): boolean {
   return !closed && Date.now() - new Date(updatedAt).getTime() < REACTION_WINDOW;
 }
 
 export function useCases() {
-  const ready = useReady();
-  return useSWR<CasesResponse>(ready ? "/api/cases" : null, fetcher, {
+  const shopId = useShopId();
+  return useSWR<CasesResponse>(keys.cases(shopId), fetcher, {
     refreshInterval: (data) =>
       data?.cases.some(
         (c) => c.status !== "needs_you" && recentlyActive(c.updatedAt, c.status === "closed"),
@@ -43,9 +50,9 @@ export function useCases() {
   });
 }
 
-export function useCase(id: string) {
-  const ready = useReady();
-  return useSWR<CaseResponse>(ready ? `/api/cases/${encodeURIComponent(id)}` : null, fetcher, {
+export function useCase(caseId: string) {
+  const shopId = useShopId();
+  return useSWR<CaseResponse>(keys.case(shopId, caseId), fetcher, {
     // Never show one case's file under another case's address while it loads.
     keepPreviousData: false,
     refreshInterval: (data) =>
@@ -58,30 +65,50 @@ export function useCase(id: string) {
 }
 
 export function useOrders() {
-  const ready = useReady();
-  return useSWR<OrdersResponse>(ready ? "/api/orders" : null, fetcher);
+  const shopId = useShopId();
+  return useSWR<OrdersResponse>(keys.orders(shopId), fetcher);
 }
 
 export function useMetrics() {
-  const ready = useReady();
-  return useSWR<Metrics>(ready ? "/api/metrics" : null, fetcher);
+  const shopId = useShopId();
+  return useSWR<Metrics>(keys.metrics(shopId), fetcher);
 }
 
-export function useStatus() {
-  const ready = useReady();
-  return useSWR<StatusResponse>(ready ? "/api/status" : null, fetcher, {
-    revalidateOnFocus: false,
+/** This person's saved Ask Truce chats in the shop, newest first. */
+export function useChats() {
+  const shopId = useShopId();
+  return useSWR<ChatsResponse>(keys.chats(shopId), fetcher);
+}
+
+/** The shop's notifications, polled about once a minute while the app is open. */
+export function useNotifications() {
+  const shopId = useShopId();
+  return useSWR<NotificationsResponse>(keys.notifications(shopId), fetcher, {
+    refreshInterval: 60_000,
   });
 }
 
-/** Re-reads everything the app shows, after a reset or a sweep. */
-export function refreshAll() {
-  // One argument only: SWR then revalidates without clearing what's on screen.
-  return mutate(
-    (key) => typeof key === "string" && key.startsWith("/api/") && key !== "/api/session",
-  );
+/** Which services this server has (models, page reads, storage). Not shop-specific. */
+export function useStatus() {
+  return useSWR<StatusResponse>(keys.status, fetcher, { revalidateOnFocus: false });
 }
 
-export function caseKey(id: string) {
-  return `/api/cases/${encodeURIComponent(id)}`;
+/** Re-reads everything the app shows for one shop, after a reset, a sweep or a sync. */
+export function refreshShop(shopId: string) {
+  const base = shopApi(shopId);
+  // One argument only: SWR then revalidates without clearing what's on screen.
+  return Promise.all([
+    mutate((key) => typeof key === "string" && (key === base || key.startsWith(`${base}/`))),
+    mutate(ME_KEY),
+  ]);
+}
+
+/** Drops a shop's cached data entirely, once the shop is gone. */
+export function forgetShopData(shopId: string) {
+  const base = shopApi(shopId);
+  return mutate(
+    (key) => typeof key === "string" && (key === base || key.startsWith(`${base}/`)),
+    undefined,
+    { revalidate: false },
+  );
 }

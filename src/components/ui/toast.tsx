@@ -1,7 +1,8 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Check, CircleAlert, Info, X } from "lucide-react";
+import { Check, CircleAlert, Info, TriangleAlert, X } from "lucide-react";
+import Link from "next/link";
 import {
   createContext,
   useCallback,
@@ -15,17 +16,28 @@ import { duration, ease, spring } from "../motion";
 import { cn } from "./cn";
 import { Portal } from "./overlay";
 
+export type ToastTone = "success" | "info" | "warning" | "error";
+
 export interface ToastOptions {
   title: string;
   description?: string;
-  tone?: "success" | "info" | "error";
-  /** Milliseconds; errors stay a little longer. */
+  tone?: ToastTone;
+  /** A link or button on the toast, such as "Sign in instead". Using it closes the toast. */
+  action?: { label: string; href: string } | { label: string; onClick: () => void };
+  /**
+   * Toasts with the same key replace each other, so trying a form again doesn't stack the same
+   * message twice.
+   */
+  key?: string;
+  /** Milliseconds; errors and warnings stay a little longer. */
   duration?: number;
 }
 
 interface ToastItem extends Required<Pick<ToastOptions, "title" | "tone">> {
   id: number;
+  key?: string;
   description?: string;
+  action?: ToastOptions["action"];
   duration: number;
 }
 
@@ -51,12 +63,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const tone = options.tone ?? "success";
     const item: ToastItem = {
       id: nextId++,
+      key: options.key,
       title: options.title,
       description: options.description,
+      action: options.action,
       tone,
-      duration: options.duration ?? (tone === "error" ? 7000 : 4500),
+      duration: options.duration ?? (tone === "error" || tone === "warning" ? 7000 : 4500),
     };
-    setItems((list) => [...list.slice(-2), item]);
+    setItems((list) => {
+      const others = item.key ? list.filter((t) => t.key !== item.key) : list;
+      return [...others.slice(-2), item];
+    });
   }, []);
 
   return (
@@ -82,6 +99,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 const icons = {
   success: <Check strokeWidth={2.5} />,
   info: <Info />,
+  warning: <TriangleAlert />,
   error: <CircleAlert />,
 };
 
@@ -106,7 +124,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
   return (
     <motion.div
       layout
-      role={item.tone === "error" ? "alert" : "status"}
+      role={item.tone === "error" || item.tone === "warning" ? "alert" : "status"}
       onPointerEnter={() => setPaused(true)}
       onPointerLeave={() => setPaused(false)}
       className="rounded-card border-line bg-paper shadow-pop pointer-events-auto flex w-full max-w-[380px] items-start gap-3 border p-3.5 pr-2.5"
@@ -119,6 +137,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
           "mt-px flex size-6 shrink-0 items-center justify-center rounded-full [&_svg]:size-3.5",
           item.tone === "success" && "bg-lemon text-ink",
           item.tone === "info" && "bg-mist text-moss-deep",
+          item.tone === "warning" && "bg-warn-50 text-warn-700",
           item.tone === "error" && "bg-risk-50 text-risk-700",
         )}
       >
@@ -129,6 +148,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
         {item.description && (
           <p className="text-ink-2 mt-0.5 text-[13px] leading-5">{item.description}</p>
         )}
+        {item.action && <ToastAction action={item.action} onDone={() => onDismiss(item.id)} />}
       </div>
       <button
         type="button"
@@ -139,5 +159,42 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
         <X />
       </button>
     </motion.div>
+  );
+}
+
+function ToastAction({
+  action,
+  onDone,
+}: {
+  action: NonNullable<ToastOptions["action"]>;
+  onDone: () => void;
+}) {
+  const className =
+    "text-moss-deep mt-1.5 inline-flex rounded-md text-[13px] font-medium underline-offset-2 hover:underline";
+  if ("href" in action && /^https?:/.test(action.href)) {
+    return (
+      <a href={action.href} target="_blank" rel="noreferrer" onClick={onDone} className={className}>
+        {action.label}
+      </a>
+    );
+  }
+  if ("href" in action) {
+    return (
+      <Link href={action.href} onClick={onDone} className={className}>
+        {action.label}
+      </Link>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        action.onClick();
+        onDone();
+      }}
+      className={className}
+    >
+      {action.label}
+    </button>
   );
 }

@@ -70,11 +70,13 @@ describe("PayPal client", () => {
         details: [{ issue: "ACTION_NOT_ALLOWED_IN_CURRENT_DISPUTE_STATE" }],
       }),
     );
-    const error = await new PayPal(config, impl).makeOffer("PP-D-1", {
-      note: "Sorry",
-      offer_type: "REFUND",
-      offer_amount: { currency_code: "USD", value: "10.00" },
-    }).catch((e: unknown) => e);
+    const error = await new PayPal(config, impl)
+      .makeOffer("PP-D-1", {
+        note: "Sorry",
+        offer_type: "REFUND",
+        offer_amount: { currency_code: "USD", value: "10.00" },
+      })
+      .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(PayPalError);
     expect(error).toMatchObject({ status: 422, issue: "UNPROCESSABLE_ENTITY", debugId: "abc123" });
   });
@@ -111,9 +113,15 @@ describe("mapping", () => {
   it("names reasons and stages in Truce's terms", () => {
     expect(reasonOf("UNAUTHORISED")).toBe("unauthorized");
     expect(reasonOf("MERCHANDISE_OR_SERVICE_NOT_AS_DESCRIBED")).toBe("not_as_described");
-    expect(stageOf({ dispute_life_cycle_stage: "INQUIRY", dispute_channel: "INTERNAL" })).toBe("inquiry");
-    expect(stageOf({ dispute_life_cycle_stage: "CHARGEBACK", dispute_channel: "INTERNAL" })).toBe("claim");
-    expect(stageOf({ dispute_life_cycle_stage: "CHARGEBACK", dispute_channel: "EXTERNAL" })).toBe("chargeback");
+    expect(stageOf({ dispute_life_cycle_stage: "INQUIRY", dispute_channel: "INTERNAL" })).toBe(
+      "inquiry",
+    );
+    expect(stageOf({ dispute_life_cycle_stage: "CHARGEBACK", dispute_channel: "INTERNAL" })).toBe(
+      "claim",
+    );
+    expect(stageOf({ dispute_life_cycle_stage: "CHARGEBACK", dispute_channel: "EXTERNAL" })).toBe(
+      "chargeback",
+    );
   });
 
   it("keeps the protection verdict and PayPal's address from a capture", () => {

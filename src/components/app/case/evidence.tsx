@@ -2,16 +2,6 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import {
-  CreditCard,
-  FileText,
-  History,
-  Image as ImageIcon,
-  MessageSquareText,
-  Package,
-  ScrollText,
-  Truck,
-} from "lucide-react";
-import {
   createContext,
   useCallback,
   useContext,
@@ -20,10 +10,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { EvidenceKind, EvidenceRecord } from "@/lib/domain";
-import { formatDate } from "@/lib/client/format";
-import { EVIDENCE_KIND } from "@/lib/client/labels";
-import { useNow } from "@/lib/client/now";
+import type { EvidenceRecord } from "@/lib/domain";
+import { useShopDates } from "@/lib/client/shop-context";
 import { duration, ease } from "../../motion";
 import { cn } from "../../ui/cn";
 import { Tooltip } from "../../ui/tooltip";
@@ -75,17 +63,6 @@ function useEvidence(): EvidenceState | null {
   return useContext(EvidenceContext);
 }
 
-const KIND_ICON: Record<EvidenceKind, ReactNode> = {
-  order: <Package />,
-  payment: <CreditCard />,
-  tracking: <Truck />,
-  listing: <FileText />,
-  policy: <ScrollText />,
-  message: <MessageSquareText />,
-  photo: <ImageIcon />,
-  history: <History />,
-};
-
 /** "E2": hover to light up the record, click to go to it. */
 export function EvidenceChip({ id, className }: { id: string; className?: string }) {
   const evidence = useEvidence();
@@ -128,10 +105,10 @@ export function EvidenceChips({ ids, className }: { ids: string[]; className?: s
   );
 }
 
-/** The records the agent gathered, each with what it proves and where it came from. */
+/** The records the agent gathered, each with what it shows and the day it's from. */
 export function EvidenceList({ records }: { records: EvidenceRecord[] }) {
   const evidence = useEvidence();
-  const now = useNow();
+  const dates = useShopDates();
   return (
     <ul className="space-y-2">
       {records.map((r, i) => {
@@ -146,7 +123,7 @@ export function EvidenceList({ records }: { records: EvidenceRecord[] }) {
             onPointerEnter={() => evidence?.setActive(r.id)}
             onPointerLeave={() => evidence?.setActive(null)}
             className={cn(
-              "relative scroll-mt-24 rounded-[10px] border p-3 transition-[background-color,border-color,box-shadow] duration-200",
+              "relative scroll-mt-24 rounded-[10px] border px-3.5 py-3 transition-[background-color,border-color,box-shadow] duration-200",
               lit
                 ? "bg-mist border-[#cfdf7f] shadow-[0_0_0_3px_rgb(221_235_148/0.6)]"
                 : "border-line-soft bg-paper",
@@ -162,18 +139,15 @@ export function EvidenceList({ records }: { records: EvidenceRecord[] }) {
                 {r.id}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-ink text-[13.5px] leading-snug font-medium">{r.title}</p>
-                  <span className="text-ink-3 flex shrink-0 items-center gap-1 text-[11px] [&_svg]:size-3">
-                    {KIND_ICON[r.kind]}
-                    {EVIDENCE_KIND[r.kind]}
-                  </span>
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="text-ink text-[14px] leading-snug font-medium">{r.title}</p>
+                  {r.at && (
+                    <time dateTime={r.at} className="text-ink-3 shrink-0 text-[13px] tabular-nums">
+                      {dates.date(r.at)}
+                    </time>
+                  )}
                 </div>
                 <Summary text={r.summary} />
-                <p className="text-ink-3 mt-1.5 truncate text-[11px]" title={r.source}>
-                  {r.source}
-                  {r.at ? ` · ${formatDate(r.at, now)}` : ""}
-                </p>
               </div>
             </div>
             <AnimatePresence>
@@ -211,7 +185,7 @@ function Summary({ text }: { text: string }) {
             e.stopPropagation();
             setOpen((o) => !o);
           }}
-          className="text-moss hover:text-moss-deep mt-0.5 text-xs font-medium transition-colors"
+          className="text-moss hover:text-moss-deep mt-1 text-[13px] font-medium transition-colors"
         >
           {open ? "Show less" : "Show all"}
         </button>

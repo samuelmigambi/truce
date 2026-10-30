@@ -2,16 +2,17 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import type { AnalysisEvent } from "@/lib/api-types";
-import type { Analysis, Case, Order, Workspace } from "@/lib/domain";
+import type { Analysis, Case, Order, Shop } from "@/lib/domain";
 import { dayShift, KEEP_FIELDS, shiftDates, shiftText, type DayShift } from "../dates";
 import { PROMPT_VERSION } from "../prompts";
 import { caseUrgency } from "./triage";
 
 /**
- * Recorded demo runs. Every demo copy starts with the same five cases, so the first live run of
- * each is recorded, event by event, and later visitors watch it again at a natural pace instead
- * of paying for it twice. A demo copy's dates are relative to the day it was made, so the
- * recording is moved to the visitor's calendar first.
+ * Recorded sample-shop runs. Every sample shop starts with the same five cases, so the first live
+ * run of each is recorded, event by event, and later visitors watch it again at a natural pace
+ * instead of paying for it twice. A sample shop's dates are relative to the moment it was seeded,
+ * so the recording is moved to the visitor's calendar first. Real shops never replay: their cases
+ * are their own.
  */
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -19,15 +20,23 @@ const DAY = 24 * 60 * 60 * 1000;
 export const REPLAY_MS = 10_000;
 export const RECORDING_SECONDS = 120 * 24 * 60 * 60;
 
+/**
+ * What a run's words depend on besides the case: the shop's name (the sign-off), its currency
+ * (every amount) and its time zone (every date and time). A recording only plays in a shop that
+ * matches.
+ */
+export type Voice = Pick<Shop, "name" | "currency" | "timeZone">;
+
 export interface Recording {
-  version: 1;
+  version: 2;
   promptVersion: string;
-  /** When the recording's workspace was made; the seed's dates are relative to it. */
+  /** The moment the recording's shop was seeded; the seed's dates are relative to it. */
   anchor: string;
   recordedAt: string;
-  /** How many days after its workspace was made the run happened. */
+  /** How many days after its shop was seeded the run happened. */
   age: number;
   fingerprint: string;
+  shop: Voice;
   /** The case's moments (opened, scans, messages…) in the recording's calendar, in a fixed order. */
   instants: string[];
   /** Every event but the result, with its time from the start of the run. */
@@ -35,16 +44,32 @@ export interface Recording {
   analysis: Analysis;
 }
 
-/**
- * `analysis:<seed version>:<seed case>:<prompt version>`. A workspace's seed version carries the
- * day its dates hang from ("wick-ember-1@2026-10-27"); the day is left out, because a replay is
- * moved to the visitor's calendar, so one recording serves every day.
- */
-export function replayKey(seedVersion: string, seedCaseId: string): string {
-  return `analysis:${seedVersion.split("@")[0]}:${seedCaseId}:${PROMPT_VERSION}`;
+const voiceOf = (shop: Voice): Voice => ({
+  name: shop.name,
+  currency: shop.currency,
+  timeZone: shop.timeZone,
+});
+
+function sameVoice(a: Voice | undefined, b: Voice): boolean {
+  return !!a && a.name === b.name && a.currency === b.currency && a.timeZone === b.timeZone;
 }
 
-/** The facts an analysis depends on, without the dates and IDs that differ between demo copies. */
+/**
+ * `analysis:<seed version>:<seed case>:<prompt version>:<voice>`. A sample shop's seed version
+ * carries the day its dates hang from ("wick-ember-1@2026-10-27"); the day is left out, because a
+ * replay is moved to the visitor's calendar, so one recording serves every day. The voice is a
+ * short hash of the shop's name, currency and time zone, so shops that write differently keep
+ * their own recordings.
+ */
+export function replayKey(seedVersion: string, seedCaseId: string, shop: Voice): string {
+  const voice = createHash("sha256")
+    .update(`${shop.name}\n${shop.currency}\n${shop.timeZone}`)
+    .digest("hex")
+    .slice(0, 12);
+  return `analysis:${seedVersion.split("@")[0]}:${seedCaseId}:${PROMPT_VERSION}:${voice}`;
+}
+
+/** The facts an analysis depends on, without the dates and IDs that differ between sample shops. */
 export function fingerprint(kase: Case, order: Order | null, closed: Case[]): string {
   const facts = {
     kase: {
@@ -91,7 +116,7 @@ export function fingerprint(kase: Case, order: Order | null, closed: Case[]): st
   return createHash("sha256").update(JSON.stringify(facts)).digest("hex").slice(0, 32);
 }
 
-/** The case's moments in a fixed order, so two copies' lists line up one to one. */
+/** The case's moments in a fixed order, so two shops' lists line up one to one. */
 export function instantsOf(kase: Case, order: Order | null, closed: Case[]): string[] {
   const list: (string | null | undefined)[] = [
     kase.openedAt,
@@ -110,12 +135,17 @@ export function instantsOf(kase: Case, order: Order | null, closed: Case[]): str
   return list.map((v) => v ?? "");
 }
 
-export function ageInDays(workspace: Pick<Workspace, "createdAt">, now: Date): number {
-  return (now.getTime() - Date.parse(workspace.createdAt)) / DAY;
+/** The moment a sample shop's dates hang from: when it was seeded, or else when it was made. */
+export function anchorOf(shop: Pick<Shop, "seededAt" | "createdAt">): string {
+  return shop.seededAt ?? shop.createdAt;
+}
+
+export function ageInDays(shop: Pick<Shop, "seededAt" | "createdAt">, now: Date): number {
+  return (now.getTime() - Date.parse(anchorOf(shop))) / DAY;
 }
 
 export function makeRecording(opts: {
-  workspace: Workspace;
+  shop: Shop;
   kase: Case;
   order: Order | null;
   closed: Case[];
@@ -124,45 +154,51 @@ export function makeRecording(opts: {
   analysis: Analysis;
 }): Recording {
   return {
-    version: 1,
+    version: 2,
     promptVersion: PROMPT_VERSION,
-    anchor: opts.workspace.createdAt,
+    anchor: anchorOf(opts.shop),
     recordedAt: opts.now.toISOString(),
-    age: ageInDays(opts.workspace, opts.now),
+    age: ageInDays(opts.shop, opts.now),
     fingerprint: fingerprint(opts.kase, opts.order, opts.closed),
+    shop: voiceOf(opts.shop),
     instants: instantsOf(opts.kase, opts.order, opts.closed),
     timeline: opts.timeline.filter((t) => t.event.type !== "result"),
     analysis: opts.analysis,
   };
 }
 
-/** Whether a recording was made from the same facts as this case, with today's prompts. */
+/**
+ * Whether a recording was made from the same facts as this case, with today's prompts, in a shop
+ * that writes the same way.
+ */
 export function sameFacts(
   rec: Recording,
   kase: Case,
   order: Order | null,
   closed: Case[],
+  shop: Voice,
 ): boolean {
   return (
-    rec.version === 1 &&
+    rec.version === 2 &&
     rec.promptVersion === PROMPT_VERSION &&
+    sameVoice(rec.shop, shop) &&
     rec.fingerprint === fingerprint(kase, order, closed)
   );
 }
 
 /**
  * Whether a recording fits this visitor's case: the same facts, and about as old relative to its
- * workspace, so "due tomorrow" still means tomorrow.
+ * shop's seeding, so "due tomorrow" still means tomorrow.
  */
 export function recordingFits(
   rec: Recording,
-  workspace: Workspace,
+  shop: Shop,
   kase: Case,
   order: Order | null,
   closed: Case[],
   now: Date,
 ): boolean {
-  return sameFacts(rec, kase, order, closed) && Math.abs(ageInDays(workspace, now) - rec.age) < 1;
+  return sameFacts(rec, kase, order, closed, shop) && Math.abs(ageInDays(shop, now) - rec.age) < 1;
 }
 
 /** The draft streams over 1.2–2.5 s of a replay, about 15 ms a piece, so it still reads as written. */
@@ -222,7 +258,7 @@ function shiftStreams(events: AnalysisEvent[], shift: DayShift): AnalysisEvent[]
 }
 
 export interface ReplayTarget {
-  workspace: Workspace;
+  shop: Shop;
   kase: Case;
   order: Order | null;
   closed: Case[];
@@ -241,12 +277,12 @@ export function moveRecording(
   const pairs: [string, string][] = rec.instants.flatMap((from, i) =>
     from && theirs[i] ? [[from, theirs[i]!] as [string, string]] : [],
   );
-  // The seed hangs every date from one moment, so any pair gives the offset; the workspaces'
-  // creation times are the fallback.
+  // The seed hangs every date from one moment, so any pair gives the offset; the shops' seeding
+  // times are the fallback.
   const first = pairs[0];
   const ms = first
     ? Date.parse(first[1]) - Date.parse(first[0])
-    : Date.parse(target.workspace.createdAt) - Date.parse(rec.anchor);
+    : Date.parse(anchorOf(target.shop)) - Date.parse(rec.anchor);
   const exact = new Map(
     pairs.map(([from, to]) => [new Date(from).toISOString(), new Date(to).toISOString()]),
   );
@@ -254,7 +290,9 @@ export function moveRecording(
     const known = exact.get(new Date(iso).toISOString());
     return known ?? new Date(Date.parse(iso) + ms).toISOString();
   };
-  const shift = dayShift(ms, rec.recordedAt, pairs);
+  // A recording only plays in a shop with its time zone (see sameFacts), so the written dates
+  // move on that one calendar.
+  const shift = dayShift(ms, rec.recordedAt, pairs, rec.shop.timeZone);
 
   // Streamed pieces are moved together below, not one by one.
   const moved = shiftDates(rec.timeline, moveInstant, shift, new Set([...KEEP_FIELDS, "delta"]));

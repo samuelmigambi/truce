@@ -32,7 +32,7 @@ export function Logo({
   className,
   title = "Truce",
 }: {
-  /** "light" for cream and white backgrounds, "dark" for ink. */
+  /** "light" follows the theme (ink on light, light on dark); "dark" is for always-dark areas. */
   tone?: "light" | "dark";
   className?: string;
   title?: string;
@@ -49,7 +49,7 @@ export function Logo({
         <g transform="translate(68.4 40.4) scale(0.7)">
           <Mark />
         </g>
-        <path d={WORDMARK} fill={tone === "dark" ? CREAM : INK} />
+        <path d={WORDMARK} fill={tone === "dark" ? CREAM : "var(--color-ink)"} />
       </g>
     </svg>
   );
@@ -87,13 +87,23 @@ export function LogoSymbol({ className, fill = INK }: { className?: string; fill
  * Truce is reading or writing. Still for people who prefer less motion (globals.css).
  */
 export function ThinkingMark({ className, tile = true }: { className?: string; tile?: boolean }) {
+  // On its lemon tile the mark is ink; on its own it takes the theme's ink.
+  const markFill = tile ? INK : "var(--color-ink)";
   return (
     <svg viewBox="0 0 64 64" aria-hidden className={cn("size-6 shrink-0", className)}>
       {tile && <rect width="64" height="64" rx="11" fill={LEMON} />}
       <g transform="translate(9.6 9.6) scale(0.8)">
-        <path d={CORNER_A} fill={INK} className="truce-think-a" />
-        <path d={CORNER_B} fill={INK} className="truce-think-b" />
-        <rect x="20" y="20" width="16" height="16" rx="3" fill={INK} className="truce-think-core" />
+        <path d={CORNER_A} fill={markFill} className="truce-think-a" />
+        <path d={CORNER_B} fill={markFill} className="truce-think-b" />
+        <rect
+          x="20"
+          y="20"
+          width="16"
+          height="16"
+          rx="3"
+          fill={markFill}
+          className="truce-think-core"
+        />
       </g>
       <style>{`
         .truce-think-a { animation: truce-think-a 1.4s cubic-bezier(0.65,0,0.35,1) infinite; }
