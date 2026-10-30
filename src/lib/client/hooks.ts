@@ -33,6 +33,20 @@ export const keys = {
 
 const REACTION_WINDOW = 4 * 60_000;
 
+/**
+ * What each polled read last looked like. When a buyer or PayPal answers, the case changes, and
+ * whatever depends on it (the bell, the numbers, the counts) is read again at once rather than
+ * waiting for its own turn.
+ */
+const lastSeen = new Map<string, string>();
+
+function noticeChange(shopId: string, key: string, signature: string, also: string[] = []) {
+  const before = lastSeen.get(key);
+  lastSeen.set(key, signature);
+  if (before === undefined || before === signature) return;
+  for (const k of [keys.notifications(shopId), keys.metrics(shopId), ...also]) void mutate(k);
+}
+
 /** A case approved a moment ago may hear back soon (a buyer, PayPal), so it's read again soon. */
 function recentlyActive(updatedAt: string, closed: boolean): boolean {
   return !closed && Date.now() - new Date(updatedAt).getTime() < REACTION_WINDOW;
@@ -41,6 +55,12 @@ function recentlyActive(updatedAt: string, closed: boolean): boolean {
 export function useCases() {
   const shopId = useShopId();
   return useSWR<CasesResponse>(keys.cases(shopId), fetcher, {
+    onSuccess: (data) =>
+      noticeChange(
+        shopId,
+        keys.cases(shopId),
+        data.cases.map((c) => `${c.id}:${c.status}:${c.updatedAt}`).join(),
+      ),
     refreshInterval: (data) =>
       data?.cases.some(
         (c) => c.status !== "needs_you" && recentlyActive(c.updatedAt, c.status === "closed"),
@@ -55,6 +75,13 @@ export function useCase(caseId: string) {
   return useSWR<CaseResponse>(keys.case(shopId, caseId), fetcher, {
     // Never show one case's file under another case's address while it loads.
     keepPreviousData: false,
+    onSuccess: (data) =>
+      noticeChange(
+        shopId,
+        keys.case(shopId, caseId),
+        `${data.case.status}:${data.case.updatedAt}:${data.events.length}`,
+        [keys.cases(shopId)],
+      ),
     refreshInterval: (data) =>
       data &&
       data.case.status !== "needs_you" &&

@@ -83,12 +83,23 @@ describe("approving in a sample shop", () => {
       from: "buyer",
       text: expect.stringMatching(/parcel locker/),
     });
-    const titles = (await store.listEvents(shop.id, "demo-inr-86")).map((e) => e.title);
+    const events = await store.listEvents(shop.id, "demo-inr-86");
+    const titles = events.map((e) => e.title);
     expect(titles.slice(-2)).toEqual(["Sam found the parcel", "Sam Rivera closed the case"]);
+    // The timeline carries Sam's own words, and the bell hears about it.
+    expect(events.at(-2)?.detail).toMatch(/parcel locker/);
+    const notes = await store.listNotifications(shop.id, 10);
+    expect(notes.find((n) => n.caseId === "demo-inr-86" && n.kind === "buyer_reply")).toMatchObject(
+      {
+        title: "Sam Rivera closed the case",
+        detail: expect.stringMatching(/parcel locker/),
+      },
+    );
 
     // Playing again changes nothing.
     expect(await play("demo-inr-86")).toEqual(closed);
     expect(await store.listEvents(shop.id, "demo-inr-86")).toHaveLength(titles.length);
+    expect(await store.listNotifications(shop.id, 10)).toHaveLength(notes.length);
   });
 
   it("settles the size complaint for $10, avoiding the claim fee", async () => {

@@ -199,22 +199,31 @@ export function PoliciesSection() {
     }
   }
 
+  // The sample shop's policies are part of its sample data: shown as they are, with nothing to save.
+  const sample = shop.kind === "sample";
+
   return (
     <SettingsSection
       id="policies"
       title="Policies"
-      description="Truce cites these word for word when it answers a buyer or sends PayPal evidence."
-      onSubmit={save}
+      description={
+        sample
+          ? "Wick & Ember's own, as its storefront publishes them. Truce cites them word for word."
+          : "Truce cites these word for word when it answers a buyer or sends PayPal evidence."
+      }
+      onSubmit={sample ? undefined : save}
       footer={
-        <SaveBar
-          dirty={form.dirty}
-          saving={saving}
-          onDiscard={() => {
-            form.discard();
-            setErrors({});
-          }}
-          note="A link keeps them current; pasted text is quoted as is"
-        />
+        sample ? undefined : (
+          <SaveBar
+            dirty={form.dirty}
+            saving={saving}
+            onDiscard={() => {
+              form.discard();
+              setErrors({});
+            }}
+            note="A link keeps them current; pasted text is quoted as is"
+          />
+        )
       }
     >
       <ShopPolicyFields
@@ -225,6 +234,7 @@ export function PoliciesSection() {
         }}
         errors={errors}
         disabled={saving}
+        readOnly={sample}
         idPrefix={POLICY_PREFIX}
       />
     </SettingsSection>

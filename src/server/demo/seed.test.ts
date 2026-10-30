@@ -6,7 +6,7 @@ import { caseProtection, shippingChecks } from "@/lib/rules/protection";
 import { shopRatio } from "@/server/metrics";
 import { MemoryStore } from "@/server/store/memory";
 import { testUser } from "@/server/testing/shops";
-import { sampleShop } from "./sample";
+import { resetSampleShop, sampleShop } from "./sample";
 import { checkDigit } from "./usps";
 import {
   buildSeed,
@@ -260,5 +260,26 @@ describe("seedSample", () => {
     await store.saveOrder(shop.id, { ...seed.orders[0]!, id: "W-9999" });
     await seedSample(store, shop, { now: new Date(created) });
     expect(await store.getOrder(shop.id, "W-9999")).toBeNull();
+  });
+
+  it("points a sample made on another server at this one's storefront when it starts over", async () => {
+    const store = new MemoryStore(() => now);
+    const local = sampleShop(
+      testUser(),
+      new Date(created),
+      "http://localhost:3100",
+      "sh_seedtests000002",
+    );
+    expect(local.website).toBe("http://localhost:3100/shop");
+    const live = "https://truce.example.app";
+    const reset = await resetSampleShop(store, local, new Date(created), live);
+    expect(reset.website).toBe(`${live}/shop`);
+    expect(reset.policies.shipping.url).toBe(`${live}/shop/policies`);
+    expect(reset.policies.returns.url).toBe(`${live}/shop/policies`);
+    expect(reset.policies.shipping.text).toBe(local.policies.shipping.text);
+
+    // Without a site address, the links it has stay as they are.
+    const kept = await resetSampleShop(store, local, new Date(created), null);
+    expect(kept.website).toBe(local.website);
   });
 });

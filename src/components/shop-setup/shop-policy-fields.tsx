@@ -47,6 +47,7 @@ export function ShopPolicyFields({
   onChange,
   errors = {},
   disabled = false,
+  readOnly = false,
   idPrefix = "policy",
 }: {
   value: ShopPolicies;
@@ -54,6 +55,8 @@ export function ShopPolicyFields({
   /** Keyed by the field's path: "shipping.url", "returns.text". */
   errors?: Record<string, string>;
   disabled?: boolean;
+  /** Shows the policies as fixed text, such as the sample shop's. */
+  readOnly?: boolean;
   idPrefix?: string;
 }) {
   return (
@@ -66,6 +69,7 @@ export function ShopPolicyFields({
           onChange={(next) => onChange({ ...value, [policy.key]: next })}
           errors={errors}
           disabled={disabled}
+          readOnly={readOnly}
           idPrefix={idPrefix}
         />
       ))}
@@ -79,6 +83,7 @@ function PolicyGroup({
   onChange,
   errors,
   disabled,
+  readOnly,
   idPrefix,
 }: {
   policy: (typeof POLICIES)[number];
@@ -86,8 +91,10 @@ function PolicyGroup({
   onChange: (value: PolicySource) => void;
   errors: Record<string, string>;
   disabled: boolean;
+  readOnly: boolean;
   idPrefix: string;
 }) {
+  const fixed = readOnly ? "bg-cream text-ink-2 hover:border-line hover:shadow-none" : undefined;
   const urlId = fieldId(idPrefix, `${policy.key}.url`);
   const textId = fieldId(idPrefix, `${policy.key}.text`);
   const legendId = `${fieldId(idPrefix, policy.key)}-legend`;
@@ -130,6 +137,8 @@ function PolicyGroup({
               value={value.url ?? ""}
               onChange={(event) => onChange({ ...value, url: event.target.value || null })}
               disabled={disabled}
+              readOnly={readOnly}
+              className={fixed}
               inputMode="url"
               autoComplete="url"
               autoCapitalize="none"
@@ -145,14 +154,16 @@ function PolicyGroup({
           label="Or paste the text"
           error={errors[`${policy.key}.text`]}
           aside={
-            <span
-              className={cn(
-                "text-xs tabular-nums",
-                near ? "text-warn-700 font-medium" : "text-ink-3",
-              )}
-            >
-              {count.format(value.text.length)} / {count.format(MAX_TEXT)}
-            </span>
+            readOnly ? undefined : (
+              <span
+                className={cn(
+                  "text-xs tabular-nums",
+                  near ? "text-warn-700 font-medium" : "text-ink-3",
+                )}
+              >
+                {count.format(value.text.length)} / {count.format(MAX_TEXT)}
+              </span>
+            )
           }
         >
           {(control) => (
@@ -161,10 +172,11 @@ function PolicyGroup({
               value={value.text}
               onChange={(event) => onChange({ ...value, text: event.target.value })}
               disabled={disabled}
+              readOnly={readOnly}
               maxLength={MAX_TEXT}
               rows={4}
               placeholder={policy.textExample}
-              className="max-h-80 min-h-28 resize-y"
+              className={cn("max-h-80 min-h-28 resize-y", fixed)}
             />
           )}
         </FormField>

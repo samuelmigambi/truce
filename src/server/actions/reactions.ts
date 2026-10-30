@@ -3,13 +3,16 @@ import "server-only";
 import type { Case, CaseEvent, CaseMessage, DisputeStage, Move, Shop } from "@/lib/domain";
 import { formatMoney, type Cents } from "@/lib/money";
 import { seedCaseId } from "@/server/demo/seed";
+import { notify, type NewNotification } from "@/server/notifications";
 import type { Store } from "@/server/store";
 import { closeCase } from "./close";
 
 /**
  * In a sample shop, buyers and PayPal answer the seller's approved step a few seconds later, so each
  * story reaches its end and the dashboard moves. The step waits on the case as `pendingReaction`
- * (what the seller did, never how it ends) and plays on the first read after it's due.
+ * (what the seller did, never how it ends) and plays on the first read after it's due. Each answer
+ * is on the case's timeline in the buyer's or PayPal's own words, and under the bell, as a real
+ * shop's would be.
  */
 
 export interface PendingReaction {
@@ -147,7 +150,9 @@ export async function playReaction(
   }));
   next = { ...next, messages: [...kase.messages, ...messages] };
   const name = kase.buyer.name;
+  const words = said[0];
   const events: Omit<CaseEvent, "id">[] = [];
+  let notice: Omit<NewNotification, "id" | "caseId" | "at"> | null = null;
 
   switch (script) {
     case "buyer_closes":
@@ -156,9 +161,11 @@ export async function playReaction(
         kind: "buyer_reply",
         actor: "buyer",
         title: `${firstName(kase)} found the parcel`,
+        detail: words,
       });
       next = await closeCase(store, shop, next, "buyer_closed", 0, new Date(at));
       events.push({ at, kind: "closed", actor: "buyer", title: `${name} closed the case` });
+      notice = { kind: "buyer_reply", title: `${name} closed the case`, detail: words };
       break;
     case "buyer_accepts_offer":
       events.push({
@@ -166,7 +173,13 @@ export async function playReaction(
         kind: "buyer_reply",
         actor: "buyer",
         title: `${name} accepted your ${money(offer)} offer`,
+        detail: words,
       });
+      notice = {
+        kind: "buyer_reply",
+        title: `${name} accepted your ${money(offer)} offer`,
+        detail: words,
+      };
       next = await closeCase(store, shop, next, "settled", offer, new Date(at));
       events.push({
         at,
@@ -183,11 +196,24 @@ export async function playReaction(
         kind: "escalated",
         actor: "buyer",
         title: `${name} escalated it to a claim`,
+        detail: words,
       });
+      notice = { kind: "dispute_updated", title: `${name} escalated the dispute to a claim` };
       break;
     case "paypal_rules_seller":
-      events.push({ at, kind: "decided", actor: "paypal", title: "PayPal ruled in your favor" });
+      events.push({
+        at,
+        kind: "decided",
+        actor: "paypal",
+        title: "PayPal ruled in your favor",
+        detail: words,
+      });
       next = await closeCase(store, shop, next, "won", 0, new Date(at));
+      notice = {
+        kind: "decided",
+        title: `PayPal ruled in your favor on ${name}'s case`,
+        detail: `You kept ${money(next.moneyKept)}.`,
+      };
       events.push({
         at,
         kind: "closed",
@@ -196,8 +222,15 @@ export async function playReaction(
       });
       break;
     case "paypal_rules_buyer": {
-      events.push({ at, kind: "decided", actor: "paypal", title: "PayPal ruled for the buyer" });
+      events.push({
+        at,
+        kind: "decided",
+        actor: "paypal",
+        title: "PayPal ruled for the buyer",
+        detail: words,
+      });
       next = await closeCase(store, shop, next, "lost", kase.amount, new Date(at));
+      notice = { kind: "decided", title: `PayPal ruled for the buyer on ${name}'s case` };
       const fee = next.feeCharged > 0 ? `, plus a ${money(next.feeCharged)} dispute fee` : "";
       events.push({
         at,
@@ -209,7 +242,14 @@ export async function playReaction(
     }
     case "buyer_thanks":
       await store.saveCase(shop.id, next);
-      events.push({ at, kind: "buyer_reply", actor: "buyer", title: `${firstName(kase)} replied` });
+      events.push({
+        at,
+        kind: "buyer_reply",
+        actor: "buyer",
+        title: `${firstName(kase)} replied`,
+        detail: words,
+      });
+      notice = { kind: "buyer_reply", title: `${name} replied`, detail: words };
       break;
   }
   await Promise.all(
@@ -217,6 +257,9 @@ export async function playReaction(
       store.addEvent(shop.id, kase.id, { id: `${reaction.id}-e${i + 1}`, ...event }),
     ),
   );
+  if (notice) {
+    await notify(store, shop.id, { ...notice, id: `reaction:${reaction.id}`, caseId: kase.id, at });
+  }
   return next;
 }
 

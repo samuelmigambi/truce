@@ -26,7 +26,7 @@ import { actionRoute, type ActionRoute, type ShopLocale } from "./shop";
  * Every prompt the agent uses, in one place. Bump PROMPT_VERSION whenever one changes: recorded
  * sample-shop runs are keyed by it, so they're redone with the new wording.
  */
-export const PROMPT_VERSION = "2026-10-29.2";
+export const PROMPT_VERSION = "2026-10-30.1";
 
 /** How everything the agent writes should read. */
 const STYLE_RULE =
@@ -258,7 +258,7 @@ const DRAFT_BRIEF: Record<DraftKind, string> = {
   message:
     "Write the seller's message to the buyer in the PayPal inquiry. Kindly explain what the records show (for example the delivery scan, its date and the address), and invite the buyer to check with neighbors or the carrier, or to reply with questions. 60 to 120 words. Greet the buyer by first name and sign off as the shop.",
   offer:
-    "Write the seller's message that goes with a partial refund offer of {offer}. Acknowledge the buyer's concern, state what the listing says (cite it), and offer {offer} as a partial refund while the buyer keeps the item. 60 to 120 words. Greet the buyer by first name and sign off as the shop.",
+    "Write the seller's message that goes with a partial refund offer of {offer}. Open by acknowledging the buyer's concern in one plain sentence, state what the listing says (cite it), and offer {offer} back while the buyer keeps the item. 60 to 120 words. Greet the buyer by first name and sign off as the shop.",
   evidence:
     "Write the notes the seller sends to PayPal's reviewer with the evidence. State the facts in order: the order, the payment and its Seller Protection status, the shipment to the PayPal address, the tracking and delivery, and what the listing or policy says, as far as the records show them. Neutral and factual, addressed to PayPal, not to the buyer. 80 to 180 words, no greeting or sign-off.",
   refund:
@@ -273,8 +273,10 @@ export const TO_BUYER: Record<DraftKind, boolean> = {
   evidence: false,
 };
 
-const TO_BUYER_RULE =
-  "You're writing to the buyer: speak to them directly, as 'you', and by first name. Never call them 'the buyer'.";
+const TO_BUYER_RULE = [
+  "You're writing to the buyer: speak to them directly, as 'you', and by first name. Never call them 'the buyer'.",
+  "Lay it out as a short letter: the greeting on its own line with a comma, like 'Hi Priya,'; the message in one or two short paragraphs; then a closing word on its own line, like 'Thanks,' or 'Best,', and the shop's name on the line after it.",
+].join(" ");
 const TO_PAYPAL_RULE =
   "You're writing to PayPal's reviewer: refer to the buyer as 'the buyer' or by name, never as 'you'.";
 

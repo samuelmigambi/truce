@@ -63,7 +63,25 @@ export async function createSampleShop(store: Store, user: User, now = new Date(
   return seedSample(store, sampleShop(user, now), { fresh: true, now });
 }
 
-/** Starts a sample shop over: fresh sample data dated from now, every change and analysis gone. */
-export async function resetSampleShop(store: Store, shop: Shop, now = new Date()): Promise<Shop> {
-  return seedSample(store, { ...shop, lastSweepAt: null }, { now });
+/**
+ * Starts a sample shop over: fresh sample data dated from now, every change and analysis gone.
+ * Its storefront links follow this server, so a sample made on another (a local one) points here.
+ */
+export async function resetSampleShop(
+  store: Store,
+  shop: Shop,
+  now = new Date(),
+  siteUrl: string | null = process.env.SITE_URL?.trim() || null,
+): Promise<Shop> {
+  const { site, policies } = storefront(siteUrl);
+  const links: Partial<Shop> = site
+    ? {
+        website: site,
+        policies: {
+          shipping: { ...shop.policies.shipping, url: policies },
+          returns: { ...shop.policies.returns, url: policies },
+        },
+      }
+    : {};
+  return seedSample(store, { ...shop, ...links, lastSweepAt: null }, { now });
 }
